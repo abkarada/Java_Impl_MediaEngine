@@ -1,14 +1,19 @@
 package media_engine.media_engine;
 
+import java.net.*;
+import java.util.Iterator;
+import java.io.IOException;
+
+
 import java.nio.channels.DatagramChannel;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
-import java.util.Iterator;
+import java.nio.channels.Pipe;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
-import java.io.IOException;
-import java.net.*;
+
+
 
 public class RTT_Client extends Thread {
     
@@ -32,6 +37,8 @@ public class RTT_Client extends Thread {
     DatagramChannel ch;
     Selector selector;
     ByteBuffer buffer; 
+    Pipe pipe;
+    Pipe.SinkChannel sink;
     
     
     public ByteBuffer createPingPacket(int senderId, int seq, long timestamp) {
@@ -89,13 +96,16 @@ public class RTT_Client extends Thread {
         }
     }
     
-    public RTT_Client(String Client_IP, int Client_PORT, String LOCAL_HOST, int LOCAL_PORT){
+    public RTT_Client(String Client_IP, int Client_PORT, String LOCAL_HOST, int LOCAL_PORT, Pipe pipe){
         this.Client_IP = Client_IP;
         this.Client_PORT = Client_PORT;
         this.LOCAL_HOST = LOCAL_HOST;
         this.LOCAL_PORT = LOCAL_PORT;
+        this.pipe = pipe;
         this.buffer = ByteBuffer.allocateDirect(PACKET_SIZE).order(ByteOrder.BIG_ENDIAN);
 
+        this.sink = pipe.sink();
+        
         try {
             this.ch = DatagramChannel.open(); 
             ch.setOption(StandardSocketOptions.SO_REUSEADDR, true); // BEFORE bind!
@@ -116,6 +126,8 @@ public class RTT_Client extends Thread {
         while(true){
             try {
                 // Send PING
+                ByteBuffer sink_pad = ByteBuffer.allocate(20);
+
                 sequence++;
                 long sendTime = System.nanoTime();
                 ByteBuffer pingPacket = createPingPacket(LOCAL_PORT, sequence, sendTime);
@@ -156,7 +168,16 @@ public class RTT_Client extends Thread {
                                             
                                             System.out.printf("RTT: %.2f ms (EWMA: %.2f ms)%n", rttMs, ewmaRtt);
                                             echoReceived = true;
-                                            break;
+
+                                            sink_pad.clear();
+                                            sink_pad.putDouble(rttMs);
+                                            sink_pad.putLong((long)ewmaRtt);
+                                            sink_pad.flip();
+                                            while(sink_pad.hasRemaining()){
+                                                sink.write(sink_pad);
+                                            }
+
+
                                         }
                                     }
                                     

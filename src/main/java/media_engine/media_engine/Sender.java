@@ -3,6 +3,9 @@ package media_engine.media_engine;
 import org.freedesktop.gstreamer.Gst;
 import org.freedesktop.gstreamer.Pipeline;
 
+import java.nio.ByteBuffer;
+import java.nio.channels.Pipe;
+
 public class Sender extends Thread {
      
     private static final String device = "/dev/video0";
@@ -16,11 +19,16 @@ public class Sender extends Thread {
     private String targetIP;
     private int targetPort;
     private int latency;
-    
-    public Sender(String targetIP, int targetPort, int latency) {
+
+    Pipe pipe;
+    Pipe.SourceChannel src;
+
+    public Sender(String targetIP, int targetPort, int latency, Pipe pipe) {
         this.targetIP = targetIP;
         this.targetPort = targetPort;
         this.latency = latency;
+        this.pipe = pipe;
+        this.src = pipe.source();
     }
 
 	public  void run() {
@@ -36,6 +44,19 @@ public class Sender extends Thread {
             "h264parse ! mpegtsmux alignment=7 ! " +
             "srtsink uri=\"srt://" + targetIP + ":" + targetPort + "?mode=caller&latency=" + latency + "&rcvlatency=" + latency + "&peerlatency=" + latency + "&tlpktdrop=1&oheadbw=25\"";
       
+        new Thread(()->{
+            ByteBuffer buf = ByteBuffer.allocate(20);
+            try{
+            while(src.read(buf) > 0){
+                buf.flip();
+                double rttMs = buf.getDouble();
+                long ewmaRtt = buf.getLong();
+                System.out.println("RTT:" + rttMs +"\n EWMA_RTT:"+ewmaRtt);
+            }
+        }catch(Exception e ){
+            System.err.println("NIO pipe Error: " + e);
+        }
+        });
         System.out.println("Pipeline: " + pipelineStr);
         Pipeline pipeline = (Pipeline) Gst.parseLaunch(pipelineStr);
         pipeline.play();
