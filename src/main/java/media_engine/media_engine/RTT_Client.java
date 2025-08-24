@@ -1,0 +1,185 @@
+package media_engine.media_engine;
+
+import java.nio.channels.DatagramChannel;
+import java.nio.channels.SelectionKey;
+import java.nio.channels.Selector;
+import java.util.Iterator;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+
+import java.io.IOException;
+import java.net.*;
+
+public class RTT_Client extends Thread {
+    
+    private static final int MAGIC = 0xABCD1357;
+    private static final byte VERSION = 1;
+    private static final byte MSG_TYPE_PING = 1;
+    private static final byte MSG_TYPE_ECHO = 2;
+    private static final int PACKET_SIZE = 64;
+    
+    private String Client_IP;  
+    private int Client_PORT;   
+    private String LOCAL_HOST; 
+    private int LOCAL_PORT;    
+
+    private static final long NANOS_PER_MS = 1_000_000L;
+    private static final double EWMA_ALPHA = 0.2;
+    
+    private double ewmaRtt = 0.0;
+    private int sequence = 0;
+    
+    DatagramChannel ch;
+    Selector selector;
+    ByteBuffer buffer; 
+    
+    
+    public ByteBuffer createPingPacket(int senderId, int seq, long timestamp) {
+        buffer.clear();
+        buffer.putInt(MAGIC);
+        buffer.put(VERSION);
+        buffer.put(MSG_TYPE_PING);
+        buffer.putShort((short)0);
+        buffer.putInt(senderId); 
+        buffer.putInt(seq);
+        buffer.putLong(timestamp);
+        buffer.position(PACKET_SIZE);
+        buffer.flip();
+        return buffer;
+    }
+    
+    public ByteBuffer createEchoPacket(ByteBuffer pingPacket) {
+        pingPacket.rewind();
+        pingPacket.position(5);
+        pingPacket.put(MSG_TYPE_ECHO);
+        pingPacket.rewind();
+        pingPacket.limit(PACKET_SIZE);
+        return pingPacket;
+    }
+    
+    public PacketInfo parsePacket(ByteBuffer packet) {
+        packet.rewind();
+        
+        int magic = packet.getInt();
+        if(magic != MAGIC) return null;
+        
+        byte version = packet.get();
+        byte msgType = packet.get();
+        short flags = packet.getShort();
+        int senderId = packet.getInt();
+        int seq = packet.getInt();
+        long timestamp = packet.getLong();
+        
+        return new PacketInfo(version, msgType, flags, senderId, seq, timestamp);
+    }
+    
+    static class PacketInfo {
+        byte version, msgType;
+        short flags;
+        int senderId, seq;
+        long timestamp;
+        
+        PacketInfo(byte version, byte msgType, short flags, int senderId, int seq, long timestamp) {
+            this.version = version;
+            this.msgType = msgType;
+            this.flags = flags;
+            this.senderId = senderId;
+            this.seq = seq;
+            this.timestamp = timestamp;
+        }
+    }
+    
+    public RTT_Client(String Client_IP, int Client_PORT, String LOCAL_HOST, int LOCAL_PORT){
+        this.Client_IP = Client_IP;
+        this.Client_PORT = Client_PORT;
+        this.LOCAL_HOST = LOCAL_HOST;
+        this.LOCAL_PORT = LOCAL_PORT;
+        this.buffer = ByteBuffer.allocateDirect(PACKET_SIZE).order(ByteOrder.BIG_ENDIAN);
+
+        try {
+            this.ch = DatagramChannel.open(); 
+            ch.setOption(StandardSocketOptions.SO_REUSEADDR, true); // BEFORE bind!
+            ch.bind(new InetSocketAddress(LOCAL_HOST, LOCAL_PORT));
+            ch.connect(new InetSocketAddress(Client_IP, Client_PORT));
+            ch.configureBlocking(false);
+            
+            this.selector = Selector.open();
+            ch.register(selector, SelectionKey.OP_READ);
+            
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    @Override
+    public void run() {
+        while(true){
+            try {
+                // Send PING
+                sequence++;
+                long sendTime = System.nanoTime();
+                ByteBuffer pingPacket = createPingPacket(LOCAL_PORT, sequence, sendTime);
+                ch.write(pingPacket);
+                
+                long deadline = System.nanoTime() + 200L * NANOS_PER_MS;
+                boolean echoReceived = false;
+
+                while (System.nanoTime() < deadline && !echoReceived) {
+                    if(selector.select(10) > 0) {
+                        for (Iterator<SelectionKey> it = selector.selectedKeys().iterator(); it.hasNext();) {
+                            SelectionKey k = it.next(); 
+                            it.remove();
+                            
+                            if (k.isReadable()) {
+                                ByteBuffer responseBuffer = ByteBuffer.allocate(PACKET_SIZE);
+                                
+                                int bytesRead;
+                                while((bytesRead = ch.read(responseBuffer)) > 0 && bytesRead >= PACKET_SIZE) {
+                                    responseBuffer.flip();
+                                    
+                                    PacketInfo info = parsePacket(responseBuffer);
+                                    if(info != null) {
+                                        if(info.msgType == MSG_TYPE_PING) {
+                                            ByteBuffer echoPacket = createEchoPacket(responseBuffer.duplicate());
+                                            ch.write(echoPacket);
+                                            
+                                        } else if(info.msgType == MSG_TYPE_ECHO && info.seq == sequence) {
+                                            long receiveTime = System.nanoTime();
+                                            long rttNanos = receiveTime - info.timestamp;
+                                            double rttMs = rttNanos / (double)NANOS_PER_MS;
+                                            
+                                            if(ewmaRtt == 0.0) {
+                                                ewmaRtt = rttMs;
+                                            } else {
+                                                ewmaRtt = EWMA_ALPHA * rttMs + (1 - EWMA_ALPHA) * ewmaRtt;
+                                            }
+                                            
+                                            System.out.printf("RTT: %.2f ms (EWMA: %.2f ms)%n", rttMs, ewmaRtt);
+                                            echoReceived = true;
+                                            break;
+                                        }
+                                    }
+                                    
+                                    responseBuffer.clear();
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                if(!echoReceived) {
+                    System.out.println("TIMEOUT - No ECHO received");
+                    if(ewmaRtt > 0) {
+                        ewmaRtt = ewmaRtt * 1.5; 
+                    }
+                }
+                
+                Thread.sleep(1000); 
+                
+            } catch (IOException | InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+}
