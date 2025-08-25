@@ -4,6 +4,7 @@ import java.net.*;
 import java.util.Iterator;
 import java.io.IOException;
 
+
 import java.nio.channels.DatagramChannel;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
@@ -99,7 +100,7 @@ public class RTT_Client extends Thread {
         
         try {
             this.ch = DatagramChannel.open(); 
-            ch.setOption(java.net.StandardSocketOptions.SO_REUSEADDR, true);
+            ch.setOption(StandardSocketOptions.SO_REUSEADDR, true);
             ch.bind(new InetSocketAddress(LOCAL_HOST, LOCAL_PORT));
             
             // Echo server'a bağlanmak için port 7002'yi kullan (sabit Echo portu)
@@ -123,7 +124,7 @@ public class RTT_Client extends Thread {
         while(true){
             try {
                 // Send PING
-                ByteBuffer sink_pad = ByteBuffer.allocate(16); // 2 doubles = 16 bytes
+                ByteBuffer sink_pad = ByteBuffer.allocate(20);
 
                 sequence++;
                 long sendTime = System.nanoTime();
@@ -164,7 +165,7 @@ public class RTT_Client extends Thread {
 
                                             sink_pad.clear();
                                             sink_pad.putDouble(rttMs);
-                                            sink_pad.putDouble(ewmaRtt);  // Long yerine Double kullan
+                                            sink_pad.putLong((long)ewmaRtt);
                                             sink_pad.flip();
                                             while(sink_pad.hasRemaining()){
                                                 sink.write(sink_pad);
