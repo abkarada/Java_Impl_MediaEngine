@@ -22,7 +22,6 @@ public class Sender extends Thread {
     private static final int BITRATE_STEP_KBPS = 500;   
     private static final double RTT_THRESHOLD_MS = 50.0;
     private static final double RTT_GOOD_MS = 20.0;         
-    private double lastEwmaRtt = 0.0;
     private long lastBitrateChange = 0;
     private static final long BITRATE_CHANGE_INTERVAL_MS = 3000; 
     
@@ -56,16 +55,18 @@ public class Sender extends Thread {
         
         int oldBitrate = current_bitrate_kbps;
         
+        // Yüksek EWMA - Bitrate düşür (Network congestion)
         if (currentEwmaRtt > RTT_THRESHOLD_MS) {
             current_bitrate_kbps = Math.max(MIN_BITRATE_KBPS, 
                                           (int)(current_bitrate_kbps * 0.8)); 
-            System.out.printf("⬇ NETWORK CONGESTION (RTT: %.2f ms) - Reducing bitrate: %d → %d kbps%n", 
+            System.out.printf("⬇ NETWORK CONGESTION (EWMA: %.2f ms) - Reducing bitrate: %d → %d kbps%n", 
                             currentEwmaRtt, oldBitrate, current_bitrate_kbps);
         } 
-        else if (currentEwmaRtt < RTT_GOOD_MS && lastEwmaRtt > 0 && currentEwmaRtt <= lastEwmaRtt) {
+        // Düşük EWMA ve stabil network - Bitrate artır
+        else if (currentEwmaRtt < RTT_GOOD_MS) {
             current_bitrate_kbps = Math.min(MAX_BITRATE_KBPS, 
                                           current_bitrate_kbps + BITRATE_STEP_KBPS);
-            System.out.printf("⬆ NETWORK STABLE (RTT: %.2f ms) - Increasing bitrate: %d → %d kbps%n", 
+            System.out.printf("⬆ NETWORK STABLE (EWMA: %.2f ms) - Increasing bitrate: %d → %d kbps%n", 
                             currentEwmaRtt, oldBitrate, current_bitrate_kbps);
         }
         
@@ -83,8 +84,6 @@ public class Sender extends Thread {
                 }
             }
         }
-        
-        lastEwmaRtt = currentEwmaRtt;
     }
 
 	public  void run() {
