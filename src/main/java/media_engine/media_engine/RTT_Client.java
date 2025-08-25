@@ -100,15 +100,21 @@ public class RTT_Client extends Thread {
         
         try {
             this.ch = DatagramChannel.open(); 
-            ch.setOption(StandardSocketOptions.SO_REUSEADDR, true); // BEFORE bind!
+            ch.setOption(StandardSocketOptions.SO_REUSEADDR, true);
             ch.bind(new InetSocketAddress(LOCAL_HOST, LOCAL_PORT));
-            ch.connect(new InetSocketAddress(Client_IP, Client_PORT));
+            
+            // Echo server'a bağlanmak için port 7002'yi kullan (sabit Echo portu)
+            int echoServerPort = 7002;
+            ch.connect(new InetSocketAddress(Client_IP, echoServerPort));
             ch.configureBlocking(false);
             
             this.selector = Selector.open();
             ch.register(selector, SelectionKey.OP_READ);
             
+            System.out.println("RTT_Client: " + LOCAL_HOST + ":" + LOCAL_PORT + " -> Echo server: " + Client_IP + ":" + echoServerPort);
+            
         } catch (IOException e) {
+            System.err.println("RTT_Client connection error: " + e.getMessage());
             e.printStackTrace();
         }
     }
