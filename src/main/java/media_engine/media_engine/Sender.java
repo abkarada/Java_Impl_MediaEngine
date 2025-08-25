@@ -127,9 +127,9 @@ public class Sender extends Thread {
         // x264enc elementini ismi ile bul - runtime bitrate değişikliği için
         x264encoder = pipeline.getElementByName("encoder");
         if (x264encoder != null) {
-            System.out.println("✅ x264encoder found - dynamic bitrate enabled");
+            System.out.println(" x264encoder found - dynamic bitrate enabled");
         } else {
-            System.out.println("⚠️ x264encoder element not found - dynamic bitrate disabled");
+            System.out.println(" x264encoder element not found - dynamic bitrate disabled");
         }
         
         pipeline.play();

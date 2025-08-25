@@ -5,8 +5,6 @@ import java.io.IOException;
 import org.freedesktop.gstreamer.Gst;
 import org.freedesktop.gstreamer.Pipeline;
 
-import media_engine.media_engine.Echo;
-
 public class Receiver extends Thread {
     private String TARGET_IP;
     private int TARGET_PORT;
@@ -24,9 +22,8 @@ public class Receiver extends Thread {
             }
     
     public void run() {
-        // Video sink'leri dene - farklı platformlarda farklı sink'ler çalışabilir
         String[] videoSinks = {"xvimagesink", "ximagesink", "autovideosink"};
-        String videoSink = videoSinks[0]; // Varsayılan olarak xvimagesink
+        String videoSink = videoSinks[0];
         
         String pipeline = "srtsrc uri=\"srt://:" + LOCAL_PORT + "?mode=listener&latency=" + LATENCY + "&rcvlatency=" + LATENCY + "&peerlatency=" + LATENCY + "&tlpktdrop=1&oheadbw=25\" ! " +
                          "tsdemux ! h264parse ! avdec_h264 ! videoconvert ! " + videoSink + " sync=true";

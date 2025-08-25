@@ -7,8 +7,7 @@ public class MediaEngine {
 
     public static void main(String[] args) {
         try {
-            // Port konfigürasyonu - çakışmaları önlemek için
-            int echoPort = 7002;        // Echo servisi için ayrı port
+            int echoPort = 7002;        // Echo servisi için port
             int receiverPort = 7001;    // Receiver için port
             int senderTargetPort = 7001; // Sender'ın bağlanacağı port
             int rttSourcePort = 7000;   // RTT Client için kaynak port
@@ -21,21 +20,17 @@ public class MediaEngine {
             
             Pipe pipe = Pipe.open();
             
-            // Echo server'ı ayrı portta başlat
             Echo echo = new Echo(echoPort);
             
-            // Receiver'ı kendi portunda başlat  
             Receiver receiver = new Receiver("127.0.0.1", senderTargetPort, receiverPort, 250);
             
-            // Sender'ı RTT ile birlikte başlat
             Sender sender = new Sender("127.0.0.1", rttSourcePort, "127.0.0.1", senderTargetPort, 250, pipe);
             
-            // Thread'leri sırayla başlat
             echo.start();
-            Thread.sleep(200); // Echo'nun başlamasını bekle
+            Thread.sleep(200); 
             
             receiver.start();
-            Thread.sleep(200); // Receiver'ın başlamasını bekle
+            Thread.sleep(200); 
             
             sender.start();
             
