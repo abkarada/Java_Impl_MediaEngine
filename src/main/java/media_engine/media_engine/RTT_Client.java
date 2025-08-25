@@ -55,14 +55,6 @@ public class RTT_Client extends Thread {
         return buffer;
     }
     
-    public ByteBuffer createEchoPacket(ByteBuffer pingPacket) {
-        pingPacket.rewind();
-        pingPacket.position(5);
-        pingPacket.put(MSG_TYPE_ECHO);
-        pingPacket.rewind();
-        pingPacket.limit(PACKET_SIZE);
-        return pingPacket;
-    }
     
     public PacketInfo parsePacket(ByteBuffer packet) {
         packet.rewind();
@@ -151,11 +143,7 @@ public class RTT_Client extends Thread {
                                     
                                     PacketInfo info = parsePacket(responseBuffer);
                                     if(info != null) {
-                                        if(info.msgType == MSG_TYPE_PING) {
-                                            ByteBuffer echoPacket = createEchoPacket(responseBuffer.duplicate());
-                                            ch.write(echoPacket);
-                                            
-                                        } else if(info.msgType == MSG_TYPE_ECHO && info.seq == sequence) {
+                                        if(info.msgType == MSG_TYPE_ECHO && info.seq == sequence) {
                                             long receiveTime = System.nanoTime();
                                             long rttNanos = receiveTime - info.timestamp;
                                             double rttMs = rttNanos / (double)NANOS_PER_MS;

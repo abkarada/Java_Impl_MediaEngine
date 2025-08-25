@@ -6,6 +6,7 @@ import org.freedesktop.gstreamer.Pipeline;
 import java.nio.ByteBuffer;
 import java.nio.channels.Pipe;
 
+
 public class Sender extends Thread {
      
     private static final String device = "/dev/video0";
@@ -18,12 +19,16 @@ public class Sender extends Thread {
     
     private String targetIP;
     private int targetPort;
+    private String LOCAL_HOST;
+    private int LOCAL_PORT;
     private int latency;
 
     Pipe pipe;
     Pipe.SourceChannel src;
 
-    public Sender(String targetIP, int targetPort, int latency, Pipe pipe) {
+    public Sender(String LOCAL_HOST, int LOCAL_PORT,String targetIP, int targetPort, int latency, Pipe pipe) {
+        this.LOCAL_HOST = LOCAL_HOST;
+        this.LOCAL_PORT = LOCAL_PORT;
         this.targetIP = targetIP;
         this.targetPort = targetPort;
         this.latency = latency;
@@ -42,7 +47,7 @@ public class Sender extends Thread {
             "videoconvert ! " +
             "x264enc tune=zerolatency bitrate=" + initial_bitrate_kbps + " key-int-max=" + key_int_max + " ! " +
             "h264parse ! mpegtsmux alignment=7 ! " +
-            "srtsink uri=\"srt://" + targetIP + ":" + targetPort + "?mode=caller&latency=" + latency + "&rcvlatency=" + latency + "&peerlatency=" + latency + "&tlpktdrop=1&oheadbw=25\"";
+            "srtsink uri=\"srt://" + targetIP + ":" + targetPort + "?mode=caller&localport=" + LOCAL_PORT + "&latency=" + latency + "&rcvlatency=" + latency + "&peerlatency=" + latency + "&tlpktdrop=1&oheadbw=25\"";
       
         new Thread(()->{
             ByteBuffer buf = ByteBuffer.allocate(20);
@@ -57,6 +62,9 @@ public class Sender extends Thread {
             System.err.println("NIO pipe Error: " + e);
         }
         });
+        RTT_Client rtt_analysis = new RTT_Client(targetIP, targetPort, LOCAL_HOST, LOCAL_PORT, pipe);
+        rtt_analysis.start();
+        
         System.out.println("Pipeline: " + pipelineStr);
         Pipeline pipeline = (Pipeline) Gst.parseLaunch(pipelineStr);
         pipeline.play();
