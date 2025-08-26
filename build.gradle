@@ -1,21 +1,54 @@
 plugins {
-    id 'java'
+    id 'java-library'  // ⭐ Library plugin
+    id 'maven-publish' // ⭐ Publishing için
     id 'application'
 }
 
-group 'com.example'
-version '1.0-SNAPSHOT'
+group 'com.mediaengine'           // ⭐ Profesyonel grup
+version '1.0.0'                   // ⭐ Semantic versioning
 
 sourceCompatibility = '17'
-
 targetCompatibility = '17'
 
 repositories {
     mavenCentral()
 }
 
+// ⭐ Main class (demo için)
 application {
     mainClass = 'media_engine.media_engine.MediaEngine'
+}
+
+// ⭐ Library JAR oluşturma
+jar {
+    archiveBaseName = 'media-engine-core'
+    archiveVersion = '1.0.0'
+    
+    // Dependencies'leri JAR'a dahil et (Fat JAR)
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+    
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    
+    manifest {
+        attributes 'Implementation-Title': 'Media Engine Core',
+                   'Implementation-Version': archiveVersion,
+                   'Main-Class': 'media_engine.media_engine.MediaEngine'
+    }
+}
+
+// ⭐ Publish ayarları
+publishing {
+    publications {
+        maven(MavenPublication) {
+            groupId = 'com.mediaengine'
+            artifactId = 'media-engine-core'
+            version = '1.0.0'
+            
+            from components.java
+        }
+    }
 }
 
 task runReceiver(type: JavaExec) {

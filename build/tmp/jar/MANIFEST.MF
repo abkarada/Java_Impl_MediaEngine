@@ -1,2 +1,5 @@
 Manifest-Version: 1.0
+Implementation-Title: Media Engine Core
+Implementation-Version: 1.0.0
+Main-Class: media_engine.media_engine.MediaEngine
 
