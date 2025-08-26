@@ -25,8 +25,20 @@ public class Receiver extends Thread {
         String[] videoSinks = {"xvimagesink", "ximagesink", "autovideosink"};
         String videoSink = videoSinks[0];
         
-        String pipeline = "srtsrc uri=\"srt://:" + LOCAL_PORT + "?mode=listener&latency=" + LATENCY + "&rcvlatency=" + LATENCY + "&peerlatency=" + LATENCY + "&tlpktdrop=1&oheadbw=25\" ! " +
-                         "tsdemux ! h264parse ! avdec_h264 ! videoconvert ! " + videoSink + " sync=true";
+        // TS demux ile hem video hem sesi çıkar
+        String pipeline =
+            "srtsrc uri=\"srt://:" + LOCAL_PORT +
+            "?mode=listener&latency=" + LATENCY +
+            "&rcvlatency=" + LATENCY +
+            "&peerlatency=" + LATENCY +
+            "&tlpktdrop=1&oheadbw=25\" ! " +
+            "tsdemux name=dmx " +
+
+            // Video branch
+            "dmx. ! queue ! h264parse ! avdec_h264 ! videoconvert ! " + videoSink + " sync=true " +
+
+            // Audio branch (AAC)
+            "dmx. ! queue ! aacparse ! avdec_aac ! audioconvert ! audioresample ! autoaudiosink sync=true";
                          
         System.out.println("Media Engine Receiver Started");
         System.out.println("Listening on SRT port: " + LOCAL_PORT);

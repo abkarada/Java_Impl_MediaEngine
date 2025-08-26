@@ -7,10 +7,10 @@ public class MediaEngine {
 
     public static void main(String[] args) {
         try {
-            int echoPort = 7002;        // Echo servisi için port
-            int receiverPort = 7001;    // Receiver için port
-            int senderTargetPort = 7001; // Sender'ın bağlanacağı port
-            int rttSourcePort = 7000;   // RTT Client için kaynak port
+            int echoPort = 7002;        
+            int receiverPort = 7001;    
+            int senderTargetPort = 7001; 
+            int rttSourcePort = 7000;   
             
             System.out.println("=== Media Engine Starting ===");
             System.out.println("Echo Server Port: " + echoPort);
