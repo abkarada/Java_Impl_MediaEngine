@@ -132,8 +132,9 @@ public class Sender extends Thread {
                 "&latency=" + latency + "&rcvlatency=" + latency +
                 "&peerlatency=" + latency + "&tlpktdrop=1&oheadbw=25\" " +
 
-            // SES DALI (AAC) -> mux'a bağla
+            // SES DALI (AAC) -> mux'a bağla (Echo engellemeli ses)
             "pulsesrc do-timestamp=true ! audioconvert ! audioresample ! " +
+            "volume volume=0.5 ! audioconvert ! audioresample ! " +  // ⭐ SES SEVİYESİ ORTA (echo engelleme)
             "queue max-size-time=20000000 ! " +
             // AAC encoder with dynamic bitrate
             "avenc_aac name=aacencoder compliance=-2 bitrate=" + current_audio_bitrate_bps + " ! aacparse ! queue max-size-time=20000000 ! mux.";

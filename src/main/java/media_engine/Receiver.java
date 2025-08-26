@@ -37,8 +37,8 @@ public class Receiver extends Thread {
             // Video branch
             "dmx. ! queue ! h264parse ! avdec_h264 ! videoconvert ! " + videoSink + " sync=true " +
 
-            // Audio branch (AAC)
-            "dmx. ! queue ! aacparse ! avdec_aac ! audioconvert ! audioresample ! autoaudiosink sync=true";
+            // Audio branch (AAC) - Echo engelleme ile
+            "dmx. ! queue ! aacparse ! avdec_aac ! audioconvert ! audioresample ! volume volume=0.4 ! autoaudiosink sync=true";
                          
         System.out.println("Media Engine Receiver Started");
         System.out.println("Listening on SRT port: " + LOCAL_PORT);
