@@ -37,6 +37,7 @@ public class Sender extends Thread {
     private String LOCAL_HOST;
     private int LOCAL_PORT;
     private int latency;
+    private String srtpKey;  // SRTP anahtarı
 
     Pipe pipe;
     Pipe.SourceChannel src;
@@ -102,7 +103,7 @@ public class Sender extends Thread {
                 }
             }
             
-            // Audio bitrate güncelle
+            // Audio bitrate güncelle (AAC için)
             if (aacEncoder != null && oldAudioBitrate != current_audio_bitrate_bps) {
                 try {
                     aacEncoder.set("bitrate", current_audio_bitrate_bps);
@@ -119,7 +120,7 @@ public class Sender extends Thread {
         System.out.println("Target: " + targetIP + ":" + targetPort);
         Gst.init("MediaEngine", new String[]{});
     
-        // H.264 (video) + AAC (audio) -> MPEG-TS
+        // H.264 (video) + AAC (audio) -> MPEG-TS - Çalışan pipeline
         String pipelineStr =
             "v4l2src device=" + device + " io-mode=2 do-timestamp=true ! " +
             "image/jpeg,width=" + WIDTH + ",height=" + HEIGHT + ",framerate=" + fps + "/1 ! " +

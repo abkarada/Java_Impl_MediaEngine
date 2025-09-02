@@ -10,6 +10,7 @@ public class Receiver extends Thread {
     private int TARGET_PORT;
     private int LOCAL_PORT = 5004;
     private int LATENCY = 250;
+    private String srtpKey;  // SRTP anahtarı
     
     
 
@@ -19,13 +20,13 @@ public class Receiver extends Thread {
         this.TARGET_PORT = TARGET_PORT;
         this.LOCAL_PORT = LOCAL_PORT;
         this.LATENCY = LATENCY;
-            }
+    }
     
     public void run() {
         String[] videoSinks = {"xvimagesink", "ximagesink", "autovideosink"};
         String videoSink = videoSinks[0];
-        
-        // TS demux ile hem video hem sesi çıkar
+
+        // SRT ile çalışan pipeline
         String pipeline =
             "srtsrc uri=\"srt://:" + LOCAL_PORT +
             "?mode=listener&latency=" + LATENCY +
