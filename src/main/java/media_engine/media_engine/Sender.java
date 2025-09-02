@@ -133,7 +133,7 @@ public class Sender extends Thread {
                 "&latency=" + latency + "&rcvlatency=" + latency +
                 "&peerlatency=" + latency + "&tlpktdrop=1&oheadbw=25\" " +
 
-            // SES DALI (AAC) -> mux'a bağla
+            // SES DALI (AAC) -> mux'a bağla (Stabil versiyon)
             "pulsesrc do-timestamp=true ! audioconvert ! audioresample ! " +
             "queue max-size-time=20000000 ! " +
             // AAC encoder with dynamic bitrate
