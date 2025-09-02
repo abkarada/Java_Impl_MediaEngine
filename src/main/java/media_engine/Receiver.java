@@ -38,8 +38,10 @@ public class Receiver extends Thread {
             // Video branch
             "dmx. ! queue ! h264parse ! avdec_h264 ! videoconvert ! " + videoSink + " sync=true " +
 
-            // Audio branch (AAC)
-            "dmx. ! queue ! aacparse ! avdec_aac ! audioconvert ! audioresample ! autoaudiosink sync=true";
+            // Audio branch (AAC) - Yankı azaltma optimizasyonları
+            "dmx. ! queue ! aacparse ! avdec_aac ! audioconvert ! audioresample ! " +
+            "volume volume=0.6 ! " +  // Ses çıkış seviyesini düşür (yankı azaltır)
+            "autoaudiosink sync=true buffer-time=50000";
                          
         System.out.println("Media Engine Receiver Started");
         System.out.println("Listening on SRT port: " + LOCAL_PORT);
