@@ -227,7 +227,7 @@ public class Sender extends Thread {
         String pipelineStr =
             "v4l2src device=" + device + " io-mode=2 do-timestamp=true ! " +
             "image/jpeg,width=" + WIDTH + ",height=" + HEIGHT + ",framerate=" + fps + "/1 ! " +
-            "jpegdec ! videoconvert ! " +
+            "jpegdec ! videoconvert ! videoflip method=horizontal-flip ! " +
             "x264enc name=encoder tune=zerolatency bitrate=" + current_bitrate_kbps + " key-int-max=" + key_int_max + " ! " +
             "h264parse config-interval=1 ! queue max-size-time=" + videoQueueTime + " ! " +     
             "mpegtsmux name=mux alignment=7 ! queue ! " +
