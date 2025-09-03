@@ -32,22 +32,22 @@ public class Receiver extends Thread {
             "?mode=listener&latency=" + LATENCY +
             "&rcvlatency=" + LATENCY +
             "&peerlatency=" + LATENCY +
-            "&tlpktdrop=1&oheadbw=25\" ! " +
+            "&tlpktdrop=1&oheadbw=5" +
+            "&sndbuf=64000&rcvbuf=64000&maxbw=0&inputbw=0&mss=1500\" ! " +
             "tsdemux name=dmx " +
 
-            // Video branch
-            "dmx. ! queue ! h264parse ! avdec_h264 ! videoconvert ! " + videoSink + " sync=true " +
+            // Video branch - Ultra düşük gecikme
+            "dmx. ! queue max-size-buffers=1 ! h264parse ! avdec_h264 ! videoconvert ! " + videoSink + " sync=false " +
 
-            // Audio branch (AAC) - Yankı azaltma + Düşük buffer
-            "dmx. ! queue ! aacparse ! avdec_aac ! audioconvert ! audioresample ! " +
+            // Audio branch (AAC) - Ultra düşük gecikme
+            "dmx. ! queue max-size-buffers=1 ! aacparse ! avdec_aac ! audioconvert ! audioresample ! " +
             "volume volume=0.6 ! " +  // Ses çıkış seviyesini düşür (yankı azaltır)
-            "autoaudiosink sync=true buffer-time=25000";  // Başlangıç 25ms (düşük gecikme)
+            "autoaudiosink sync=false buffer-time=1000";
                          
-        System.out.println("📺 Adaptive Media Engine Receiver Started");
-        System.out.println("🔊 Listening on SRT port: " + LOCAL_PORT);
-        System.out.println("🖥️ Using video sink: " + videoSink);
-        System.out.println("⚡ Dynamic Buffer System: ENABLED");
-        System.out.println("🎯 Initial audio buffer: 25ms (will adapt to network)");
+        System.out.println("Media Engine Receiver Started");
+        System.out.println("Listening on SRT port: " + LOCAL_PORT);
+        System.out.println("Using video sink: " + videoSink);
+        System.out.println("Attempting to open video window...");
 
         Gst.init("MediaEngineReceiver", new String[]{});
         System.out.println("Pipeline: " + pipeline);

@@ -19,28 +19,27 @@ public class Sender extends Thread {
     private volatile int current_bitrate_kbps = 2000;  
     private static final int MIN_BITRATE_KBPS = 1000;
     private static final int MAX_BITRATE_KBPS = 15000;
-    private static final int BITRATE_STEP_KBPS = 500;   
+    private static final int BITRATE_STEP_KBPS = 200;   // Yumuşak geçişler (500->200)
     
     private volatile int current_audio_bitrate_bps = 128000;  // 128 kbps default
     private static final int MIN_AUDIO_BITRATE_BPS = 64000;   // 64 kbps minimum
     private static final int MAX_AUDIO_BITRATE_BPS = 256000;  // 256 kbps maximum
-    private static final int AUDIO_BITRATE_STEP_BPS = 32000;  // 32 kbps step
+    private static final int AUDIO_BITRATE_STEP_BPS = 16000;  // Yumuşak geçişler (32000->16000)
     
     private static final double RTT_THRESHOLD_MS = 40.0;     // Daha düşük threshold (50->40)
     private static final double RTT_GOOD_MS = 15.0;         // Daha agresif artış (20->15)
     private long lastBitrateChange = 0;
-    private static final long BITRATE_CHANGE_INTERVAL_MS = 1500;  // Daha hızlı ayarlama (3000->1500) 
+    private static final long BITRATE_CHANGE_INTERVAL_MS = 800;  // Çok daha hızlı (1500->800) 
     
-    // Dinamik Buffer Ayarları
-    private volatile long current_buffer_time_ns = 50_000_000L;  // Başlangıç: 50ms
-    private static final long MIN_BUFFER_TIME_NS = 10_000_000L;  // Minimum: 10ms (gerçek zamanlı)
-    private static final long MAX_BUFFER_TIME_NS = 100_000_000L; // Maximum: 100ms (güvenli)
-    private static final long BUFFER_STEP_NS = 10_000_000L;      // 10ms adımlar
+    // SRT Buffer ve Network Parametreleri (Ultra düşük gecikme)
+    private static final int SRT_SEND_BUFFER = 64000;      // 64KB - Minimum buffer
+    private static final int SRT_RECV_BUFFER = 64000;      // 64KB - Minimum buffer  
+    private static final int SRT_MSS = 1500;               // Standard MTU
+    private static final int SRT_OVERHEAD = 5;             // %5 minimum overhead
     
-    // RTT Tabanlı Buffer Eşikleri
-    private static final double RTT_EXCELLENT_MS = 10.0;  // Mükemmel ağ (<10ms)
-    private static final double RTT_VERY_GOOD_MS = 20.0;  // Çok iyi ağ (<20ms)
-    private static final double RTT_BAD_MS = 80.0;        // Kötü ağ (>80ms) 
+    // Queue Buffer Parametreleri (Sabit ultra düşük)
+    private int videoQueueTime = 1000000;   // 1ms sabit (çok küçük)
+    private int audioQueueTime = 1000000;   // 1ms sabit (çok küçük)
     
     private String targetIP;
     private int targetPort;
@@ -55,17 +54,21 @@ public class Sender extends Thread {
     private Element x264encoder;
     private Element aacEncoder;  // AAC encoder referansı
 
-    public Sender(String LOCAL_HOST, int LOCAL_PORT,String targetIP, int targetPort, int latency, Pipe pipe) {
+    public Sender(String LOCAL_HOST, int LOCAL_PORT, String targetIP, int targetPort, int latency, String srtpKey, Pipe pipe) {
         this.LOCAL_HOST = LOCAL_HOST;
         this.LOCAL_PORT = LOCAL_PORT;
         this.targetIP = targetIP;
         this.targetPort = targetPort;
         this.latency = latency;
+        this.srtpKey = srtpKey;
         this.pipe = pipe;
         this.src = pipe.source();
+        
+        // Buffer'lar sabit kalacak - Ultra düşük gecikme için
+        System.out.println("🚀 Ultra Low Latency Mode: 1ms queues, 64KB buffers");
     }
 
-    private void adjustBitrateAndBuffers(double currentEwmaRtt) {
+    private void adjustBitrate(double currentEwmaRtt) {
         long currentTime = System.currentTimeMillis();
         
         if (currentTime - lastBitrateChange < BITRATE_CHANGE_INTERVAL_MS) {
@@ -74,36 +77,34 @@ public class Sender extends Thread {
         
         int oldBitrate = current_bitrate_kbps;
         int oldAudioBitrate = current_audio_bitrate_bps;
-        long oldBufferTime = current_buffer_time_ns;
-        
-        // RTT'ye göre dinamik buffer ayarlama
-        adjustDynamicBuffers(currentEwmaRtt);
         
         if (currentEwmaRtt > RTT_THRESHOLD_MS) {
-            // Daha agresif bitrate düşürme
+            // EWMA bazlı yumuşak bitrate düşürme
+            double reduction_factor = Math.min(0.9, 1.0 - (currentEwmaRtt - RTT_THRESHOLD_MS) / 200.0);
             current_bitrate_kbps = Math.max(MIN_BITRATE_KBPS, 
-                                          (int)(current_bitrate_kbps * 0.7)); // 0.8 -> 0.7 daha agresif
-            // Audio bitrate düşür
+                                          (int)(current_bitrate_kbps * reduction_factor));
+            // Audio bitrate düşür - yumuşak geçiş
             current_audio_bitrate_bps = Math.max(MIN_AUDIO_BITRATE_BPS,
-                                                current_audio_bitrate_bps - (AUDIO_BITRATE_STEP_BPS * 2)); // 2x daha hızlı
+                                                current_audio_bitrate_bps - AUDIO_BITRATE_STEP_BPS);
             
-            System.out.printf("⬇ NETWORK CONGESTION (EWMA: %.2f ms) - Reducing bitrates:%n", currentEwmaRtt);
-            System.out.printf("   Video: %d → %d kbps | Audio: %d → %d bps | Buffer: %.1f ms%n", 
-                            oldBitrate, current_bitrate_kbps, oldAudioBitrate, current_audio_bitrate_bps,
-                            current_buffer_time_ns / 1_000_000.0);
+            System.out.printf("⬇ NETWORK CONGESTION (EWMA: %.2f ms) - Smooth reduction (%.1f%%):%n", 
+                            currentEwmaRtt, (1.0 - reduction_factor) * 100);
+            System.out.printf("   Video: %d → %d kbps | Audio: %d → %d bps%n", 
+                            oldBitrate, current_bitrate_kbps, oldAudioBitrate, current_audio_bitrate_bps);
         } 
         else if (currentEwmaRtt < RTT_GOOD_MS) {
-            // Daha hızlı bitrate artırma
+            // EWMA bazlı yumuşak bitrate artırma
+            double increase_steps = Math.max(1.0, (RTT_GOOD_MS - currentEwmaRtt) / 5.0);
             current_bitrate_kbps = Math.min(MAX_BITRATE_KBPS, 
-                                          current_bitrate_kbps + (BITRATE_STEP_KBPS * 2)); // 2x daha hızlı artış
-            // Audio bitrate artır
+                                          current_bitrate_kbps + (int)(BITRATE_STEP_KBPS * increase_steps));
+            // Audio bitrate artır - yumuşak geçiş
             current_audio_bitrate_bps = Math.min(MAX_AUDIO_BITRATE_BPS,
-                                                current_audio_bitrate_bps + (AUDIO_BITRATE_STEP_BPS * 2)); // 2x daha hızlı
+                                                current_audio_bitrate_bps + AUDIO_BITRATE_STEP_BPS);
             
-            System.out.printf("⬆ NETWORK STABLE (EWMA: %.2f ms) - Increasing bitrates:%n", currentEwmaRtt);
-            System.out.printf("   Video: %d → %d kbps | Audio: %d → %d bps | Buffer: %.1f ms%n", 
-                            oldBitrate, current_bitrate_kbps, oldAudioBitrate, current_audio_bitrate_bps,
-                            current_buffer_time_ns / 1_000_000.0);
+            System.out.printf("⬆ NETWORK EXCELLENT (EWMA: %.2f ms) - Smooth increase (%.1fx steps):%n", 
+                            currentEwmaRtt, increase_steps);
+            System.out.printf("   Video: %d → %d kbps | Audio: %d → %d bps%n", 
+                            oldBitrate, current_bitrate_kbps, oldAudioBitrate, current_audio_bitrate_bps);
         }
         
         if (oldBitrate != current_bitrate_kbps || oldAudioBitrate != current_audio_bitrate_bps) {
@@ -130,36 +131,6 @@ public class Sender extends Thread {
             }
         }
     }
-    
-    private void adjustDynamicBuffers(double currentEwmaRtt) {
-        long newBufferTime = current_buffer_time_ns;
-        
-        if (currentEwmaRtt <= RTT_EXCELLENT_MS) {
-            // Mükemmel ağ: Ultra düşük buffer (gerçek zamanlı)
-            newBufferTime = MIN_BUFFER_TIME_NS; // 10ms
-        } else if (currentEwmaRtt <= RTT_VERY_GOOD_MS) {
-            // Çok iyi ağ: Düşük buffer
-            newBufferTime = 20_000_000L; // 20ms
-        } else if (currentEwmaRtt <= RTT_GOOD_MS) {
-            // İyi ağ: Orta buffer
-            newBufferTime = 30_000_000L; // 30ms
-        } else if (currentEwmaRtt <= RTT_THRESHOLD_MS) {
-            // Kabul edilebilir ağ: Normal buffer
-            newBufferTime = 50_000_000L; // 50ms
-        } else if (currentEwmaRtt <= RTT_BAD_MS) {
-            // Kötü ağ: Yüksek buffer
-            newBufferTime = 80_000_000L; // 80ms
-        } else {
-            // Çok kötü ağ: Maksimum buffer
-            newBufferTime = MAX_BUFFER_TIME_NS; // 100ms
-        }
-        
-        if (newBufferTime != current_buffer_time_ns) {
-            current_buffer_time_ns = newBufferTime;
-            System.out.printf("🔧 BUFFER ADJUSTED: %.1f ms (RTT: %.2f ms)%n", 
-                            current_buffer_time_ns / 1_000_000.0, currentEwmaRtt);
-        }
-    }
 
 	public  void run() {
         System.out.println("Media Engine Sender Started");
@@ -171,19 +142,20 @@ public class Sender extends Thread {
             "image/jpeg,width=" + WIDTH + ",height=" + HEIGHT + ",framerate=" + fps + "/1 ! " +
             "jpegdec ! videoconvert ! " +
             "x264enc name=encoder tune=zerolatency bitrate=" + current_bitrate_kbps + " key-int-max=" + key_int_max + " ! " +
-            "h264parse config-interval=1 ! queue max-size-time=" + current_buffer_time_ns + " ! " +  // Dinamik buffer
-            "mpegtsmux name=mux alignment=7 ! queue max-size-time=" + current_buffer_time_ns + " ! " +  // Dinamik buffer
+            "h264parse config-interval=1 ! queue max-size-time=" + videoQueueTime + " ! " +     
+            "mpegtsmux name=mux alignment=7 ! queue ! " +
             "srtsink uri=\"srt://" + targetIP + ":" + targetPort +
                 "?mode=caller&localport=" + LOCAL_PORT +
                 "&latency=" + latency + "&rcvlatency=" + latency +
-                "&peerlatency=" + latency + "&tlpktdrop=1&oheadbw=25\" " +
+                "&peerlatency=" + latency + "&tlpktdrop=1&oheadbw=" + SRT_OVERHEAD +
+                "&sndbuf=" + SRT_SEND_BUFFER + "&rcvbuf=" + SRT_RECV_BUFFER + 
+                "&maxbw=0&inputbw=0&mss=" + SRT_MSS + "\" " +
 
             "pulsesrc do-timestamp=true ! audioconvert ! audioresample ! " +
             "volume volume=0.8 ! " + 
             "audioconvert ! audioresample ! " +
-            "queue max-size-time=" + (current_buffer_time_ns / 2) + " ! " +  // Audio buffer yarısı (ses için daha az)
-            "avenc_aac name=aacencoder compliance=-2 bitrate=" + current_audio_bitrate_bps + " ! " +
-            "aacparse ! queue max-size-time=" + (current_buffer_time_ns / 2) + " ! mux.";
+            "queue max-size-time=" + audioQueueTime + " ! " +
+            "avenc_aac name=aacencoder compliance=-2 bitrate=" + current_audio_bitrate_bps + " ! aacparse ! queue max-size-time=" + audioQueueTime + " ! mux.";
                        
         new Thread(()->{
             ByteBuffer buf = ByteBuffer.allocate(16); 
@@ -195,7 +167,7 @@ public class Sender extends Thread {
                 System.out.printf("RTT: %.2f ms | EWMA: %.2f ms | Video: %d kbps | Audio: %d bps%n", 
                                 rttMs, ewmaRtt, current_bitrate_kbps, current_audio_bitrate_bps);
                 
-                adjustBitrateAndBuffers(ewmaRtt);
+                adjustBitrate(ewmaRtt);
                 buf.clear();
             }
         }catch(Exception e ){

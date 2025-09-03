@@ -183,9 +183,25 @@ public class RTT_Client extends Thread {
                 }
                 
                 if(!echoReceived) {
-                    System.out.println("TIMEOUT - No ECHO received");
+                    System.out.println("⚠️  PACKET LOSS DETECTED - No ECHO received");
+                    // Paket kaybında çok agresif müdahale
                     if(ewmaRtt > 0) {
-                        ewmaRtt = ewmaRtt * 1.5; 
+                        ewmaRtt = ewmaRtt * 2.0;  // 1.5 -> 2.0 daha agresif
+                    } else {
+                        ewmaRtt = 150.0;  // İlk paket kaybında yüksek penalty
+                    }
+                    
+                    // Paket kaybı bilgisini pipe'a gönder
+                    try {
+                        ByteBuffer lossBuffer = ByteBuffer.allocate(16);
+                        lossBuffer.putDouble(ewmaRtt);
+                        lossBuffer.putDouble(ewmaRtt);  // Loss durumunda aynı değer
+                        lossBuffer.flip();
+                        while(lossBuffer.hasRemaining()) {
+                            sink.write(lossBuffer);
+                        }
+                    } catch (IOException e) {
+                        System.err.println("Pipe write error on packet loss: " + e);
                     }
                 }
                 
