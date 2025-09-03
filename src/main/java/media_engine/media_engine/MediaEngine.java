@@ -22,9 +22,9 @@ public class MediaEngine {
             
             Echo echo = new Echo(echoPort);
             
-            Receiver receiver = new Receiver("127.0.0.1", senderTargetPort, receiverPort, 50);
+            Receiver receiver = new Receiver("192.168.1.213", senderTargetPort, receiverPort, 50);
             
-            Sender sender = new Sender("127.0.0.1", rttSourcePort, "127.0.0.1", senderTargetPort, 50, pipe);
+            Sender sender = new Sender("192.168.1.207", rttSourcePort, "192.168.1.213", senderTargetPort, 50, pipe);
             
             echo.start();
             Thread.sleep(200); 
