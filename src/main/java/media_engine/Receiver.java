@@ -33,14 +33,14 @@ public class Receiver extends Thread {
             "&rcvlatency=" + LATENCY +
             "&peerlatency=" + LATENCY +
             "&tlpktdrop=1&oheadbw=5" +
-            "&sndbuf=64000&rcvbuf=64000&maxbw=0&inputbw=0&mss=1500\" ! " +
+            "&sndbuf=512000&rcvbuf=512000&maxbw=0&inputbw=0&mss=1500\" ! " +
             "tsdemux name=dmx " +
 
             // Video branch - Ultra düşük gecikme
-            "dmx. ! queue max-size-buffers=1 ! h264parse ! avdec_h264 ! videoconvert ! " + videoSink + " sync=false " +
+            "dmx. ! queue max-size-buffers=5 ! h264parse ! avdec_h264 ! videoconvert ! " + videoSink + " sync=false " +
 
             // Audio branch (AAC) - Ultra düşük gecikme
-            "dmx. ! queue max-size-buffers=1 ! aacparse ! avdec_aac ! audioconvert ! audioresample ! " +
+            "dmx. ! queue max-size-buffers=5 ! aacparse ! avdec_aac ! audioconvert ! audioresample ! " +
             "volume volume=0.6 ! " +  // Ses çıkış seviyesini düşür (yankı azaltır)
             "autoaudiosink sync=false buffer-time=1000";
                          

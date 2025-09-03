@@ -34,6 +34,13 @@ public class RTT_Client extends Thread {
     public double ewmaRtt = 0.0;
     public int sequence = 0;
     
+    // Packet loss ve jitter tracking
+    private int totalPacketsSent = 0;
+    private int packetsLost = 0;
+    private double[] recentRTTs = new double[10];  // Son 10 RTT değeri
+    private int rttIndex = 0;
+    private boolean rttArrayFull = false;
+    
     DatagramChannel ch;
     Selector selector;
     ByteBuffer buffer; 
@@ -88,6 +95,33 @@ public class RTT_Client extends Thread {
         }
     }
     
+    // Jitter hesaplama (RTT değişkenliği)
+    private double calculateJitter() {
+        if (!rttArrayFull && rttIndex < 2) return 0.0;
+        
+        double sum = 0.0;
+        double mean = 0.0;
+        int count = rttArrayFull ? recentRTTs.length : rttIndex;
+        
+        // Ortalama RTT hesapla
+        for (int i = 0; i < count; i++) {
+            mean += recentRTTs[i];
+        }
+        mean /= count;
+        
+        // Standart sapma hesapla (jitter)
+        for (int i = 0; i < count; i++) {
+            sum += Math.pow(recentRTTs[i] - mean, 2);
+        }
+        return Math.sqrt(sum / count);
+    }
+    
+    // Packet loss oranı hesapla
+    private double calculatePacketLoss() {
+        if (totalPacketsSent == 0) return 0.0;
+        return (double) packetsLost / totalPacketsSent;
+    }
+    
     public RTT_Client(String Client_IP, int Client_PORT, String LOCAL_HOST, int LOCAL_PORT, Pipe pipe){
         this.Client_IP = Client_IP;
         this.Client_PORT = Client_PORT;
@@ -124,14 +158,15 @@ public class RTT_Client extends Thread {
         while(true){
             try {
                 // Send PING
-                ByteBuffer sink_pad = ByteBuffer.allocate(16); // 2 doubles = 16 bytes (FIXED)
+                ByteBuffer sink_pad = ByteBuffer.allocate(32); // 4 doubles = 32 bytes (RTT, EWMA, PacketLoss, Jitter)
 
                 sequence++;
+                totalPacketsSent++;
                 long sendTime = System.nanoTime();
                 ByteBuffer pingPacket = createPingPacket(LOCAL_PORT, sequence, sendTime);
                 ch.write(pingPacket);
                 
-                long deadline = System.nanoTime() + 200L * NANOS_PER_MS;
+                long deadline = System.nanoTime() + 100L * NANOS_PER_MS;  // 100ms timeout (200ms -> 100ms)
                 boolean echoReceived = false;
 
                 while (System.nanoTime() < deadline && !echoReceived) {
@@ -160,12 +195,23 @@ public class RTT_Client extends Thread {
                                                 ewmaRtt = EWMA_ALPHA * rttMs + (1 - EWMA_ALPHA) * ewmaRtt;
                                             }
                                             
-                                            System.out.printf("RTT: %.2f ms (EWMA: %.2f ms)%n", rttMs, ewmaRtt);
+                                            // RTT değerini array'e ekle (jitter hesabı için)
+                                            recentRTTs[rttIndex] = rttMs;
+                                            rttIndex = (rttIndex + 1) % recentRTTs.length;
+                                            if (rttIndex == 0) rttArrayFull = true;
+                                            
+                                            double jitter = calculateJitter();
+                                            double packetLossRate = calculatePacketLoss();
+                                            
+                                            System.out.printf("📡 RTT: %.2f ms (EWMA: %.2f ms) | Loss: %.1f%% | Jitter: %.2f ms%n", 
+                                                rttMs, ewmaRtt, packetLossRate*100, jitter);
                                             echoReceived = true;
 
                                             sink_pad.clear();
                                             sink_pad.putDouble(rttMs);
-                                            sink_pad.putDouble(ewmaRtt);  // FIXED: Long → Double
+                                            sink_pad.putDouble(ewmaRtt);
+                                            sink_pad.putDouble(packetLossRate);  // Packet loss oranı
+                                            sink_pad.putDouble(jitter);          // Jitter değeri
                                             sink_pad.flip();
                                             while(sink_pad.hasRemaining()){
                                                 sink.write(sink_pad);
@@ -183,7 +229,9 @@ public class RTT_Client extends Thread {
                 }
                 
                 if(!echoReceived) {
-                    System.out.println("⚠️  PACKET LOSS DETECTED - No ECHO received");
+                    packetsLost++;
+                    System.out.println("🔴 PACKET LOSS DETECTED - No ECHO received (Loss: " + 
+                        String.format("%.1f%%", calculatePacketLoss()*100) + ")");
                     // Paket kaybında çok agresif müdahale
                     if(ewmaRtt > 0) {
                         ewmaRtt = ewmaRtt * 2.0;  // 1.5 -> 2.0 daha agresif
@@ -193,9 +241,11 @@ public class RTT_Client extends Thread {
                     
                     // Paket kaybı bilgisini pipe'a gönder
                     try {
-                        ByteBuffer lossBuffer = ByteBuffer.allocate(16);
+                        ByteBuffer lossBuffer = ByteBuffer.allocate(32);  // 4 doubles için
+                        lossBuffer.putDouble(0.0);  // RTT - packet loss durumunda 0
                         lossBuffer.putDouble(ewmaRtt);
-                        lossBuffer.putDouble(ewmaRtt);  // Loss durumunda aynı değer
+                        lossBuffer.putDouble(calculatePacketLoss());  // Güncel packet loss oranı
+                        lossBuffer.putDouble(calculateJitter());      // Güncel jitter
                         lossBuffer.flip();
                         while(lossBuffer.hasRemaining()) {
                             sink.write(lossBuffer);
@@ -205,7 +255,7 @@ public class RTT_Client extends Thread {
                     }
                 }
                 
-                Thread.sleep(500);  // Daha sık RTT ölçümü (1000ms -> 500ms) 
+                Thread.sleep(200);  // Çok daha sık RTT ölçümü (500ms -> 200ms) 
                 
             } catch (IOException | InterruptedException e) {
                 e.printStackTrace();
