@@ -27,10 +27,10 @@ public class Sender extends Thread {
     private static final int MAX_AUDIO_BITRATE_BPS = 256000;  // 256 kbps maximum
     private static final int AUDIO_BITRATE_STEP_BPS = 32000;  // 32 kbps step
     
-    private static final double RTT_THRESHOLD_MS = 50.0;
-    private static final double RTT_GOOD_MS = 20.0;         
+    private static final double RTT_THRESHOLD_MS = 40.0;     // Daha düşük threshold (50->40)
+    private static final double RTT_GOOD_MS = 15.0;         // Daha agresif artış (20->15)
     private long lastBitrateChange = 0;
-    private static final long BITRATE_CHANGE_INTERVAL_MS = 3000; 
+    private static final long BITRATE_CHANGE_INTERVAL_MS = 1500;  // Daha hızlı ayarlama (3000->1500) 
     
     private String targetIP;
     private int targetPort;
@@ -66,24 +66,24 @@ public class Sender extends Thread {
         int oldAudioBitrate = current_audio_bitrate_bps;
         
         if (currentEwmaRtt > RTT_THRESHOLD_MS) {
-            // Video bitrate düşür
+            // Daha agresif bitrate düşürme
             current_bitrate_kbps = Math.max(MIN_BITRATE_KBPS, 
-                                          (int)(current_bitrate_kbps * 0.8)); 
+                                          (int)(current_bitrate_kbps * 0.7)); // 0.8 -> 0.7 daha agresif
             // Audio bitrate düşür
             current_audio_bitrate_bps = Math.max(MIN_AUDIO_BITRATE_BPS,
-                                                current_audio_bitrate_bps - AUDIO_BITRATE_STEP_BPS);
+                                                current_audio_bitrate_bps - (AUDIO_BITRATE_STEP_BPS * 2)); // 2x daha hızlı
             
             System.out.printf("⬇ NETWORK CONGESTION (EWMA: %.2f ms) - Reducing bitrates:%n", currentEwmaRtt);
             System.out.printf("   Video: %d → %d kbps | Audio: %d → %d bps%n", 
                             oldBitrate, current_bitrate_kbps, oldAudioBitrate, current_audio_bitrate_bps);
         } 
         else if (currentEwmaRtt < RTT_GOOD_MS) {
-            // Video bitrate artır
+            // Daha hızlı bitrate artırma
             current_bitrate_kbps = Math.min(MAX_BITRATE_KBPS, 
-                                          current_bitrate_kbps + BITRATE_STEP_KBPS);
+                                          current_bitrate_kbps + (BITRATE_STEP_KBPS * 2)); // 2x daha hızlı artış
             // Audio bitrate artır
             current_audio_bitrate_bps = Math.min(MAX_AUDIO_BITRATE_BPS,
-                                                current_audio_bitrate_bps + AUDIO_BITRATE_STEP_BPS);
+                                                current_audio_bitrate_bps + (AUDIO_BITRATE_STEP_BPS * 2)); // 2x daha hızlı
             
             System.out.printf("⬆ NETWORK STABLE (EWMA: %.2f ms) - Increasing bitrates:%n", currentEwmaRtt);
             System.out.printf("   Video: %d → %d kbps | Audio: %d → %d bps%n", 
@@ -120,29 +120,26 @@ public class Sender extends Thread {
         System.out.println("Target: " + targetIP + ":" + targetPort);
         Gst.init("MediaEngine", new String[]{});
     
-        // H.264 (video) + AAC (audio) -> MPEG-TS - Çalışan pipeline
         String pipelineStr =
             "v4l2src device=" + device + " io-mode=2 do-timestamp=true ! " +
             "image/jpeg,width=" + WIDTH + ",height=" + HEIGHT + ",framerate=" + fps + "/1 ! " +
             "jpegdec ! videoconvert ! " +
             "x264enc name=encoder tune=zerolatency bitrate=" + current_bitrate_kbps + " key-int-max=" + key_int_max + " ! " +
-            "h264parse config-interval=1 ! queue max-size-time=20000000 ! " +          // ~20 ms
+            "h264parse config-interval=1 ! queue max-size-time=20000000 ! " +     
             "mpegtsmux name=mux alignment=7 ! queue ! " +
             "srtsink uri=\"srt://" + targetIP + ":" + targetPort +
                 "?mode=caller&localport=" + LOCAL_PORT +
                 "&latency=" + latency + "&rcvlatency=" + latency +
                 "&peerlatency=" + latency + "&tlpktdrop=1&oheadbw=25\" " +
 
-            // SES DALI (AAC) - Yankı azaltma -> mux'a bağla
             "pulsesrc do-timestamp=true ! audioconvert ! audioresample ! " +
-            "volume volume=0.8 ! " +  // Mikrofon hassasiyetini düşür (yankı azaltır)
+            "volume volume=0.8 ! " + 
             "audioconvert ! audioresample ! " +
             "queue max-size-time=20000000 ! " +
-            // AAC encoder with dynamic bitrate
             "avenc_aac name=aacencoder compliance=-2 bitrate=" + current_audio_bitrate_bps + " ! aacparse ! queue max-size-time=20000000 ! mux.";
                        
         new Thread(()->{
-            ByteBuffer buf = ByteBuffer.allocate(16); // 2 doubles = 16 bytes
+            ByteBuffer buf = ByteBuffer.allocate(16); 
             try{
             while(src.read(buf) > 0){
                 buf.flip();

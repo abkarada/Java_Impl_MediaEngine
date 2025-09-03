@@ -29,7 +29,7 @@ public class RTT_Client extends Thread {
     private int LOCAL_PORT;    
 
     private static final long NANOS_PER_MS = 1_000_000L;
-    private static final double EWMA_ALPHA = 0.2;
+    private static final double EWMA_ALPHA = 0.4;  // Daha responsive (0.2 -> 0.4)
     
     public double ewmaRtt = 0.0;
     public int sequence = 0;
@@ -189,7 +189,7 @@ public class RTT_Client extends Thread {
                     }
                 }
                 
-                Thread.sleep(1000); 
+                Thread.sleep(500);  // Daha sık RTT ölçümü (1000ms -> 500ms) 
                 
             } catch (IOException | InterruptedException e) {
                 e.printStackTrace();
