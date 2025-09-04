@@ -35,18 +35,26 @@ public class Sender extends Thread {
     
     private volatile int current_bitrate_kbps = 2000;  
     private static final int MIN_BITRATE_KBPS = 1000;
-    private static final int MAX_BITRATE_KBPS = 12000;
+    private static final int MAX_BITRATE_KBPS = 6000;    // 12K->6K (daha mantıklı)
     private static final int BITRATE_STEP_KBPS = 150;   
     
     private volatile int current_audio_bitrate_bps = 128000;  // 128 kbps default
     private static final int MIN_AUDIO_BITRATE_BPS = 64000;   // 64 kbps minimum
-    private static final int MAX_AUDIO_BITRATE_BPS = 256000;  // 256 kbps maximum
+    private static final int MAX_AUDIO_BITRATE_BPS = 192000;  // 256K->192K (daha mantıklı)
     private static final int AUDIO_BITRATE_STEP_BPS = 16000;  // Yumuşak geçişler (32000->16000)
     
-    private static final double RTT_THRESHOLD_MS = 40.0;     // Daha düşük threshold (50->40)
-    private static final double RTT_GOOD_MS = 15.0;         // Daha agresif artış (20->15)
+    private static final double RTT_THRESHOLD_MS = 60.0;     // Çok daha yüksek threshold (40->60)
+    private static final double RTT_GOOD_MS = 25.0;         // Daha konservatif artış (15->25)
     private long lastBitrateChange = 0;
-    private static final long BITRATE_CHANGE_INTERVAL_MS = 300;  // Ultra responsive (800->300ms) 
+    private static final long BITRATE_CHANGE_INTERVAL_MS = 5000;  // Bitrate için de 5 saniye (2000->5000ms)
+    
+    // JITTER VE BUFFER STABİLİTE DEĞİŞKENLERİ
+    private long lastBufferChange = 0;
+    private static final long BUFFER_CHANGE_INTERVAL_MS = 8000;   // Buffer için 8 saniye (5000->8000ms)
+    private int stableNetworkCounter = 0;                         // Stabil ağ sayacı
+    private static final int STABLE_NETWORK_REQUIRED = 15;       // 15 ölçüm stabil olmalı (10->15)
+    private int excellentNetworkCounter = 0;                     // Mükemmel ağ sayacı
+    private static final int EXCELLENT_NETWORK_REQUIRED = 25;    // Bitrate artışı için 25 mükemmel ölçüm 
     
     // SRT Buffer ve Network Parametreleri (GÜVENLİ başlangıç)
     private volatile int currentSendBuffer = 512000;       // Başlangıç: 512KB (güvenli)
@@ -56,11 +64,11 @@ public class Sender extends Thread {
     private static final int SRT_MSS = 1500;               // Standard MTU
     private volatile int currentOverhead = 15;              // Başlangıç: %15 (dengeli), min %5
     
-    // Queue Buffer Parametreleri (GERÇEK DÜNYA değerleri)
-    private volatile int videoQueueTime = 50000000;   // Başlangıç: 50ms (gaming optimal)
-    private volatile int audioQueueTime = 50000000;   // Başlangıç: 50ms (gaming optimal) 
-    private static final int MIN_QUEUE_TIME = 20000000;      // 20ms minimum (gaming alt limit)
-    private static final int MAX_QUEUE_TIME = 200000000;     // 200ms maximum (broadcast üst limit)
+    // Queue Buffer Parametreleri (ÇOK GÜVENLİ değerler)
+    private volatile int videoQueueTime = 100000000;  // Başlangıç: 100ms (çok güvenli)
+    private volatile int audioQueueTime = 100000000;  // Başlangıç: 100ms (çok güvenli) 
+    private static final int MIN_QUEUE_TIME = 80000000;      // 80ms minimum (çok güvenli alt limit)
+    private static final int MAX_QUEUE_TIME = 500000000;     // 500ms maximum (çok yüksek üst limit)
     
     private String targetIP;
     private int targetPort;
@@ -91,107 +99,98 @@ public class Sender extends Thread {
         this.src = pipe.source();
         this.receiver = receiver;  // Receiver referansını sakla
         
-        // Dengeli başlangıç - EWMA'ya göre kademeli optimizasyon
-        System.out.println("Dengeli Mod: 20ms queue, 512KB buffer → EWMA optimizasyonu aktif");
+        // ULTRA GÜVENLİ başlangıç - maksimum stabilite
+        System.out.println("🔒 ULTRA KONSERVATIF MOD: 100ms queue, 512KB buffer");
+        System.out.println("🐌 ÇOK YAVAŞ ADAPTASYON: 5s bitrate, 8s buffer interval");
+        System.out.println("🛡️ ULTRA GÜVENLİK: Bitrate max 6K, artış için 25 mükemmel ölçüm");
+        System.out.println("📊 KATI KOŞULLAR: RTT<15ms ve 25 art arda ölçüm gerekli");
         System.out.println("RTT Client kullanacağı ayrı port: " + LOCAL_RTT_PORT);
     }
 
-    // Adaptive buffer yönetimi - EWMA tabanlı kademeli optimizasyon
+    // Adaptive buffer yönetimi - ÇOK KONSERVATIF ve GÜVENLİ yaklaşım
     private void adaptBuffers(double packetLoss, double jitter, double rtt) {
         try {
-            // FIX 2: Eşikleri ~2x gevşet ve EWMA RTT bazlı karar (stabil sınıflandırma)
-            boolean networkExcellent = (packetLoss < 0.005 && jitter < 6.0 && rtt < 15.0);   // Gevşetildi: 15ms RTT, 6ms jitter
-            boolean networkGood = (packetLoss < 0.015 && jitter < 15.0 && rtt < 30.0);       // Gevşetildi: 30ms RTT, 15ms jitter
-            boolean networkFair = (packetLoss < 0.03 && jitter < 25.0 && rtt < 60.0);        // Gevşetildi: 60ms RTT, 25ms jitter
-            boolean networkBad = (packetLoss > 0.05 || jitter > 35.0 || rtt > 80.0);         // Gevşetildi: 80ms RTT, 35ms jitter
-            boolean burstDetected = (packetLoss > 0.1 || jitter > 50.0);                     // Gevşetildi: 50ms jitter
+            long currentTime = System.currentTimeMillis();
             
-            // DEBUG: Network kategorizasyonu (EWMA bazlı, stabil)
-            System.out.printf("🔍 STABIL KATEGORI - Loss:%.3f%% Jitter:%.1fms EWMA:%.1fms → ", 
-                packetLoss*100, jitter, rtt);
-            
-            // FIX 2: burstDetected öncelik sırası düzeltildi (exclusive kontrol)
-            if(burstDetected) System.out.print("🔥 BURST");
-            else if(networkExcellent) System.out.print("⭐ EXCELLENT");
-            else if(networkGood) System.out.print("✅ GOOD"); 
-            else if(networkFair) System.out.print("⚠️ FAIR");
-            else if(networkBad) System.out.print("❌ BAD");
-            else System.out.print("🔶 NORMAL");
-            System.out.println();
-            
-            // FIX 2: Önce burst kontrolü (exclusive)
-            if (burstDetected) {
-                // Burst: Broadcast seviyesine çık (200ms)
-                currentSendBuffer = Math.min(MAX_BUFFER, currentSendBuffer * 2);
-                currentRecvBuffer = Math.min(MAX_BUFFER, currentRecvBuffer * 2);
-                currentOverhead = Math.min(25, currentOverhead + 5);
-                
-                // ADAPTIVE FPS: Burst'ta minimum FPS (acil bandwidth tasarrufu)
-                fps = MIN_FPS;  // Hemen minimum FPS'e düş
-                
-                videoQueueTime = Math.min(MAX_QUEUE_TIME, videoQueueTime * 2);
-                audioQueueTime = Math.min(MAX_QUEUE_TIME, audioQueueTime * 2);
-                
-                System.out.println("🔴 BURST - Broadcast seviye: " + 
-                    (currentSendBuffer/1000) + "KB (Video: " + (videoQueueTime/1000000) + "ms) FPS: " + fps + " (Emergency)");
-                    
-            } else if (networkExcellent) {
-                // Mükemmel ağ: Queue'ları KONTROLLÜ azalt (gaming seviyesine)
-                currentSendBuffer = Math.max(MIN_BUFFER, (int)(currentSendBuffer * 0.98)); // %2 azalt
-                currentRecvBuffer = Math.max(MIN_BUFFER, (int)(currentRecvBuffer * 0.98));
-                currentOverhead = Math.max(5, currentOverhead - 1);
-                
-                // ADAPTIVE FPS: Mükemmel ağda maximum FPS
-                fps = Math.min(MAX_FPS, fps + 1);  // Kademeli FPS artışı
-                
-                // Queue'ları gaming seviyesine çek (50ms → 33ms → 20ms)
-                videoQueueTime = Math.max(MIN_QUEUE_TIME, (int)(videoQueueTime * 0.95));
-                audioQueueTime = Math.max(MIN_QUEUE_TIME, (int)(audioQueueTime * 0.95));
-                
-                System.out.println("🟢 MÜKEMMEL AĞ - Gaming optimize: " + 
-                    (currentSendBuffer/1000) + "KB (Video: " + (videoQueueTime/1000000) + "ms) FPS: " + fps);
-                    
-            } else if (networkGood) {
-                // İyi ağ: SRT'yi biraz azalt, queue'yu sabit tut
-                currentSendBuffer = Math.max(MIN_BUFFER, (int)(currentSendBuffer * 0.99)); // %1 azalt
-                currentRecvBuffer = Math.max(MIN_BUFFER, (int)(currentRecvBuffer * 0.99));
-                currentOverhead = Math.max(5, currentOverhead);
-                
-                // ADAPTIVE FPS: İyi ağda stabil FPS
-                fps = Math.min(MAX_FPS, Math.max(25, fps));  // 25-30 FPS arası stabil
-                
-                // Queue'ları çok az azalt (video conferencing seviyesi)
-                videoQueueTime = Math.max(MIN_QUEUE_TIME, (int)(videoQueueTime * 0.98));
-                audioQueueTime = Math.max(MIN_QUEUE_TIME, (int)(audioQueueTime * 0.98));
-                
-                System.out.println("🟡 İYİ AĞ - Konferans optimize: " + 
-                    (currentSendBuffer/1000) + "KB (Video: " + (videoQueueTime/1000000) + "ms) FPS: " + fps);
-                    
-            } else if (networkFair) {
-                // Orta ağ: Streaming seviyesinde tut (50ms-100ms)
-                // ADAPTIVE FPS: Orta ağda conservative FPS
-                fps = Math.max(20, Math.min(25, fps));  // 20-25 FPS arası (bandwidth koruması)
-                
-                System.out.println("🟠 ORTA AĞ - Streaming sabit: " + 
-                    (currentSendBuffer/1000) + "KB (Video: " + (videoQueueTime/1000000) + "ms) FPS: " + fps);
-                    
-            } else if (networkBad) {
-                // Kötü ağ: Buffer'ları arttır
-                currentSendBuffer = Math.min(MAX_BUFFER, (int)(currentSendBuffer * 1.1));
-                currentRecvBuffer = Math.min(MAX_BUFFER, (int)(currentRecvBuffer * 1.1));
-                currentOverhead = Math.min(25, currentOverhead + 2);
-                
-                // ADAPTIVE FPS: Kötü ağda minimum FPS (bandwidth tasarrufu)
-                fps = Math.max(MIN_FPS, fps - 1);  // Kademeli FPS düşürme
-                
-                videoQueueTime = Math.min(MAX_QUEUE_TIME, (int)(videoQueueTime * 1.2));
-                audioQueueTime = Math.min(MAX_QUEUE_TIME, (int)(audioQueueTime * 1.2));
-                
-                System.out.println("🔴 KÖTÜ AĞ - Buffer arttır: " + 
-                    (currentSendBuffer/1000) + "KB (Video: " + (videoQueueTime/1000000) + "ms) FPS: " + fps);
+            // Buffer değişimi için zaman kontrolü - en az 8 saniye bekle
+            if (currentTime - lastBufferChange < BUFFER_CHANGE_INTERVAL_MS) {
+                return; // Çok erken, değişiklik yapma
             }
             
-            // Queue elementlerini güncelle + Receiver'a senkronize et
+            // ULTRA KONSERVATIF eşikler - gerçekten kötü durumda değişiklik yap
+            boolean networkExcellent = (packetLoss < 0.001 && jitter < 3.0 && rtt < 20.0);   // Çok katı: %0.1 loss, 3ms jitter
+            boolean networkGood = (packetLoss < 0.005 && jitter < 8.0 && rtt < 35.0);       // Katı: %0.5 loss, 8ms jitter
+            boolean networkFair = (packetLoss < 0.02 && jitter < 20.0 && rtt < 70.0);       // Normal: %2 loss, 20ms jitter
+            boolean networkBad = (packetLoss > 0.08 || jitter > 80.0 || rtt > 150.0);       // Gerçekten kötü: %8 loss, 80ms jitter
+            boolean burstDetected = (packetLoss > 0.15 || jitter > 150.0);                  // Çok ciddi: %15 loss, 150ms jitter
+            
+            // Stabil ağ sayacı - art arda iyi ölçümler gerekli
+            if (networkGood || networkExcellent) {
+                stableNetworkCounter++;
+            } else {
+                stableNetworkCounter = 0; // Reset sayacı
+            }
+            
+            // DEBUG: Network kategorizasyonu (çok konservatif)
+            System.out.printf("� KONSERVATIF KATEGORI - Loss:%.4f%% Jitter:%.1fms RTT:%.1fms Stable:%d → ", 
+                packetLoss*100, jitter, rtt, stableNetworkCounter);
+            
+            if(burstDetected) System.out.print("🔥 CİDDİ BURST");
+            else if(networkBad) System.out.print("❌ GERÇEKTEN KÖTÜ");
+            else if(networkFair) System.out.print("🟠 NORMAL");
+            else if(networkGood) System.out.print("✅ İYİ (Sayaç:" + stableNetworkCounter + ")"); 
+            else if(networkExcellent) System.out.print("⭐ MÜKEMMEL (Sayaç:" + stableNetworkCounter + ")");
+            else System.out.print("🔶 STABİL");
+            System.out.println();
+            
+            // ÇOK KÜÇÜK değişiklikler - sadece gerçekten gerekli durumlarda
+            if (burstDetected) {
+                // Sadece ciddi burst'ta buffer arttır - ama az
+                currentSendBuffer = Math.min(MAX_BUFFER, (int)(currentSendBuffer * 1.05)); // Sadece %5 arttır
+                currentRecvBuffer = Math.min(MAX_BUFFER, (int)(currentRecvBuffer * 1.05));
+                currentOverhead = Math.min(25, currentOverhead + 1); // Sadece 1 arttır
+                
+                videoQueueTime = Math.min(MAX_QUEUE_TIME, (int)(videoQueueTime * 1.1)); // Sadece %10 arttır
+                audioQueueTime = Math.min(MAX_QUEUE_TIME, (int)(audioQueueTime * 1.1));
+                
+                lastBufferChange = currentTime; // Zaman güncelle
+                
+                System.out.println("🔴 CİDDİ DURUM - MİNİMAL buffer artış: " + 
+                    (currentSendBuffer/1000) + "KB (Video: " + (videoQueueTime/1000000) + "ms)");
+                    
+            } else if (networkBad) {
+                // Gerçekten kötü ağda küçük artış
+                currentSendBuffer = Math.min(MAX_BUFFER, (int)(currentSendBuffer * 1.02)); // Sadece %2 arttır
+                currentRecvBuffer = Math.min(MAX_BUFFER, (int)(currentRecvBuffer * 1.02));
+                
+                videoQueueTime = Math.min(MAX_QUEUE_TIME, (int)(videoQueueTime * 1.05)); // Sadece %5 arttır
+                audioQueueTime = Math.min(MAX_QUEUE_TIME, (int)(audioQueueTime * 1.05));
+                
+                lastBufferChange = currentTime;
+                
+                System.out.println("� KÖTÜ AĞ - Küçük buffer artış: " + 
+                    (currentSendBuffer/1000) + "KB (Video: " + (videoQueueTime/1000000) + "ms)");
+                    
+            } else if (networkExcellent && stableNetworkCounter >= STABLE_NETWORK_REQUIRED) {
+                // Sadece uzun süre mükemmel ağda ve çok az azalt
+                currentSendBuffer = Math.max(MIN_BUFFER, (int)(currentSendBuffer * 0.99)); // Sadece %1 azalt
+                currentRecvBuffer = Math.max(MIN_BUFFER, (int)(currentRecvBuffer * 0.99));
+                
+                videoQueueTime = Math.max(MIN_QUEUE_TIME, (int)(videoQueueTime * 0.98)); // Sadece %2 azalt
+                audioQueueTime = Math.max(MIN_QUEUE_TIME, (int)(audioQueueTime * 0.98));
+                
+                lastBufferChange = currentTime;
+                stableNetworkCounter = 0; // Reset sayacı
+                
+                System.out.println("� UZUN SÜRE MÜKEMMEL - MİNİMAL azalma: " + 
+                    (currentSendBuffer/1000) + "KB (Video: " + (videoQueueTime/1000000) + "ms)");
+            } else {
+                // Hiçbir değişiklik yapma - mevcut değerleri koru
+                System.out.println("� DEĞİŞİKLİK YOK - Mevcut değerler korunuyor: " + 
+                    (currentSendBuffer/1000) + "KB (Video: " + (videoQueueTime/1000000) + "ms)");
+            }
+            
+            // Queue elementlerini güncelle
             updateQueueBuffers();
             
         } catch (Exception e) {
@@ -217,6 +216,7 @@ public class Sender extends Thread {
     private void adjustBitrate(double currentEwmaRtt) {
         long currentTime = System.currentTimeMillis();
         
+        // ÇOK UZUN interval - en az 5 saniye bekle
         if (currentTime - lastBitrateChange < BITRATE_CHANGE_INTERVAL_MS) {
             return;
         }
@@ -224,31 +224,68 @@ public class Sender extends Thread {
         int oldBitrate = current_bitrate_kbps;
         int oldAudioBitrate = current_audio_bitrate_bps;
         
-        if (currentEwmaRtt > RTT_THRESHOLD_MS) {
-            double reduction_factor = Math.min(0.9, 1.0 - (currentEwmaRtt - RTT_THRESHOLD_MS) / 200.0);
+        // ULTRA KATI bitrate yönetimi
+        
+        // RTT gerçekten kötüyse azalt - ama çok az
+        if (currentEwmaRtt > RTT_THRESHOLD_MS * 1.5) { // 90ms'den kötüyse
+            // Çok minimal azalma - sadece %1-2 arası
+            double reduction_factor = Math.max(0.98, 1.0 - (currentEwmaRtt - RTT_THRESHOLD_MS * 1.5) / 2000.0);
             current_bitrate_kbps = Math.max(MIN_BITRATE_KBPS, 
                                           (int)(current_bitrate_kbps * reduction_factor));
-            current_audio_bitrate_bps = Math.max(MIN_AUDIO_BITRATE_BPS,
-                                                current_audio_bitrate_bps - AUDIO_BITRATE_STEP_BPS);
             
-            System.out.printf("⬇ NETWORK CONGESTION (EWMA: %.2f ms) - Smooth reduction (%.1f%%):%n", 
+            // Audio için sadece çok ciddi durumda azalt (120ms üstü)
+            if (currentEwmaRtt > RTT_THRESHOLD_MS * 2.0) {
+                current_audio_bitrate_bps = Math.max(MIN_AUDIO_BITRATE_BPS,
+                                                    current_audio_bitrate_bps - (AUDIO_BITRATE_STEP_BPS / 4));
+            }
+            
+            System.out.printf("⬇ CİDDİ RTT DURUMU (%.2f ms) - Minimal azalma (%.2f%%):%n", 
                             currentEwmaRtt, (1.0 - reduction_factor) * 100);
             System.out.printf("   Video: %d → %d kbps | Audio: %d → %d bps%n", 
                             oldBitrate, current_bitrate_kbps, oldAudioBitrate, current_audio_bitrate_bps);
+                            
         } 
-        else if (currentEwmaRtt < RTT_GOOD_MS) {
-            // EWMA bazlı yumuşak bitrate artırma
-            double increase_steps = Math.max(1.0, (RTT_GOOD_MS - currentEwmaRtt) / 5.0);
-            current_bitrate_kbps = Math.min(MAX_BITRATE_KBPS, 
-                                          current_bitrate_kbps + (int)(BITRATE_STEP_KBPS * increase_steps));
-            // Audio bitrate artır - yumuşak geçiş
-            current_audio_bitrate_bps = Math.min(MAX_AUDIO_BITRATE_BPS,
-                                                current_audio_bitrate_bps + AUDIO_BITRATE_STEP_BPS);
+        // Bitrate artışı için ULTRA KATI koşullar
+        else if (currentEwmaRtt < RTT_GOOD_MS * 0.6) { // 15ms'den iyi olmalı
+            excellentNetworkCounter++;
             
-            System.out.printf("⬆ NETWORK EXCELLENT (EWMA: %.2f ms) - Smooth increase (%.1fx steps):%n", 
-                            currentEwmaRtt, increase_steps);
-            System.out.printf("   Video: %d → %d kbps | Audio: %d → %d bps%n", 
-                            oldBitrate, current_bitrate_kbps, oldAudioBitrate, current_audio_bitrate_bps);
+            // 25 art arda mükemmel ölçüm gerekli
+            if (excellentNetworkCounter >= EXCELLENT_NETWORK_REQUIRED) {
+                // Çok minimal artış - sadece %0.5-1 arası
+                double increase_factor = Math.min(1.005, 1.0 + (RTT_GOOD_MS * 0.6 - currentEwmaRtt) / 5000.0);
+                current_bitrate_kbps = Math.min(MAX_BITRATE_KBPS, 
+                                              (int)(current_bitrate_kbps * increase_factor));
+                
+                // Audio için daha da zorlaştır - 30 mükemmel ölçüm gerekli
+                if (excellentNetworkCounter >= (EXCELLENT_NETWORK_REQUIRED + 5) && 
+                    currentEwmaRtt < RTT_GOOD_MS * 0.4) { // 10ms'den iyi
+                    current_audio_bitrate_bps = Math.min(MAX_AUDIO_BITRATE_BPS,
+                                                        current_audio_bitrate_bps + (AUDIO_BITRATE_STEP_BPS / 8));
+                }
+                
+                excellentNetworkCounter = 0; // Reset sayacı
+                
+                System.out.printf("⬆ 25 MÜKEMMEL ÖLÇÜM SONRASI (RTT: %.2f ms) - Micro artış (%.3f%%):%n", 
+                                currentEwmaRtt, (increase_factor - 1.0) * 100);
+                System.out.printf("   Video: %d → %d kbps | Audio: %d → %d bps%n", 
+                                oldBitrate, current_bitrate_kbps, oldAudioBitrate, current_audio_bitrate_bps);
+            } else {
+                System.out.printf("⭐ MÜKEMMEL RTT (%.2f ms) - Sayaç: %d/%d (Artış için bekleniyor)%n", 
+                                currentEwmaRtt, excellentNetworkCounter, EXCELLENT_NETWORK_REQUIRED);
+            }
+            
+        } else {
+            // RTT normal/kötü - sayaçları sıfırla
+            excellentNetworkCounter = 0;
+            
+            if (currentEwmaRtt < RTT_GOOD_MS) {
+                System.out.printf("✅ İYİ RTT (%.2f ms) - Bitrate sabit: %d kbps (Artış için %.2f ms gerekli)%n", 
+                                currentEwmaRtt, current_bitrate_kbps, RTT_GOOD_MS * 0.6);
+            } else {
+                System.out.printf("🔒 NORMAL RTT (%.2f ms) - Bitrate sabit: %d kbps | Audio: %d bps%n", 
+                                currentEwmaRtt, current_bitrate_kbps, current_audio_bitrate_bps);
+            }
+            return;
         }
         
         if (oldBitrate != current_bitrate_kbps || oldAudioBitrate != current_audio_bitrate_bps) {
