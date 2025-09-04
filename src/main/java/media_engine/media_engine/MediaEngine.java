@@ -18,12 +18,12 @@ public class MediaEngine {
         try{
             Pipe pipe = Pipe.open();
 
+            Receiver receiver = new Receiver(my_STREAM_RECEIVER_PORT, my_ECHO_SERVER_PORT, 50);
+
             Sender sender = new Sender(my_IP, my_STREAM_SENDER_PORT,
                                           my_RTT_SENDER_PORT, target_ECHO_SERVER,
                                           target_IP, target_RECEIVER_PORT,
-                                      50, "default0123456789", pipe);
-
-            Receiver receiver = new Receiver(my_STREAM_RECEIVER_PORT, my_ECHO_SERVER_PORT, 50);
+                                      50, "default0123456789", pipe, receiver);  // Receiver referansı eklendi
 
             synchronized(receiver) {
                 receiver.start();

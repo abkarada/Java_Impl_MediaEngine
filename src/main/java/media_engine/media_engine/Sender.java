@@ -28,7 +28,9 @@ public class Sender extends Thread {
     }
     private static  int WIDTH = 1280;
     private static  int HEIGHT = 720;
-    private static  int fps = 30;
+    private volatile int fps = 30;                              // ADAPTIVE FPS (network-based)
+    private static final int MIN_FPS = 15;                      // Minimum FPS (güvenli alt limit)
+    private static final int MAX_FPS = 30;                      // Maximum FPS (quality limit)
     private static int key_int_max = 30;
     
     private volatile int current_bitrate_kbps = 2000;  
@@ -74,8 +76,9 @@ public class Sender extends Thread {
     private Pipeline pipeline;
     private Element x264encoder;
     private Element aacEncoder;  // AAC encoder referansı
+    private media_engine.Receiver receiver;  // Receiver referansı (buffer senkronizasyonu için)
 
-    public Sender(String LOCAL_HOST, int LOCAL_PORT, int LOCAL_RTT_PORT, int ECHO_PORT, String targetIP, int targetPort, int latency, String srtpKey, Pipe pipe) {
+    public Sender(String LOCAL_HOST, int LOCAL_PORT, int LOCAL_RTT_PORT, int ECHO_PORT, String targetIP, int targetPort, int latency, String srtpKey, Pipe pipe, media_engine.Receiver receiver) {
         this.LOCAL_HOST = LOCAL_HOST;
         this.LOCAL_PORT = LOCAL_PORT;
         this.LOCAL_RTT_PORT = LOCAL_RTT_PORT;
@@ -86,6 +89,7 @@ public class Sender extends Thread {
         this.srtpKey = srtpKey;
         this.pipe = pipe;
         this.src = pipe.source();
+        this.receiver = receiver;  // Receiver referansını sakla
         
         // Dengeli başlangıç - EWMA'ya göre kademeli optimizasyon
         System.out.println("Dengeli Mod: 20ms queue, 512KB buffer → EWMA optimizasyonu aktif");
@@ -122,11 +126,14 @@ public class Sender extends Thread {
                 currentRecvBuffer = Math.min(MAX_BUFFER, currentRecvBuffer * 2);
                 currentOverhead = Math.min(25, currentOverhead + 5);
                 
+                // ADAPTIVE FPS: Burst'ta minimum FPS (acil bandwidth tasarrufu)
+                fps = MIN_FPS;  // Hemen minimum FPS'e düş
+                
                 videoQueueTime = Math.min(MAX_QUEUE_TIME, videoQueueTime * 2);
                 audioQueueTime = Math.min(MAX_QUEUE_TIME, audioQueueTime * 2);
                 
                 System.out.println("🔴 BURST - Broadcast seviye: " + 
-                    (currentSendBuffer/1000) + "KB (Video: " + (videoQueueTime/1000000) + "ms)");
+                    (currentSendBuffer/1000) + "KB (Video: " + (videoQueueTime/1000000) + "ms) FPS: " + fps + " (Emergency)");
                     
             } else if (networkExcellent) {
                 // Mükemmel ağ: Queue'ları KONTROLLÜ azalt (gaming seviyesine)
@@ -134,12 +141,15 @@ public class Sender extends Thread {
                 currentRecvBuffer = Math.max(MIN_BUFFER, (int)(currentRecvBuffer * 0.98));
                 currentOverhead = Math.max(5, currentOverhead - 1);
                 
+                // ADAPTIVE FPS: Mükemmel ağda maximum FPS
+                fps = Math.min(MAX_FPS, fps + 1);  // Kademeli FPS artışı
+                
                 // Queue'ları gaming seviyesine çek (50ms → 33ms → 20ms)
                 videoQueueTime = Math.max(MIN_QUEUE_TIME, (int)(videoQueueTime * 0.95));
                 audioQueueTime = Math.max(MIN_QUEUE_TIME, (int)(audioQueueTime * 0.95));
                 
                 System.out.println("🟢 MÜKEMMEL AĞ - Gaming optimize: " + 
-                    (currentSendBuffer/1000) + "KB (Video: " + (videoQueueTime/1000000) + "ms)");
+                    (currentSendBuffer/1000) + "KB (Video: " + (videoQueueTime/1000000) + "ms) FPS: " + fps);
                     
             } else if (networkGood) {
                 // İyi ağ: SRT'yi biraz azalt, queue'yu sabit tut
@@ -147,17 +157,23 @@ public class Sender extends Thread {
                 currentRecvBuffer = Math.max(MIN_BUFFER, (int)(currentRecvBuffer * 0.99));
                 currentOverhead = Math.max(5, currentOverhead);
                 
+                // ADAPTIVE FPS: İyi ağda stabil FPS
+                fps = Math.min(MAX_FPS, Math.max(25, fps));  // 25-30 FPS arası stabil
+                
                 // Queue'ları çok az azalt (video conferencing seviyesi)
                 videoQueueTime = Math.max(MIN_QUEUE_TIME, (int)(videoQueueTime * 0.98));
                 audioQueueTime = Math.max(MIN_QUEUE_TIME, (int)(audioQueueTime * 0.98));
                 
                 System.out.println("🟡 İYİ AĞ - Konferans optimize: " + 
-                    (currentSendBuffer/1000) + "KB (Video: " + (videoQueueTime/1000000) + "ms)");
+                    (currentSendBuffer/1000) + "KB (Video: " + (videoQueueTime/1000000) + "ms) FPS: " + fps);
                     
             } else if (networkFair) {
                 // Orta ağ: Streaming seviyesinde tut (50ms-100ms)
+                // ADAPTIVE FPS: Orta ağda conservative FPS
+                fps = Math.max(20, Math.min(25, fps));  // 20-25 FPS arası (bandwidth koruması)
+                
                 System.out.println("🟠 ORTA AĞ - Streaming sabit: " + 
-                    (currentSendBuffer/1000) + "KB (Video: " + (videoQueueTime/1000000) + "ms)");
+                    (currentSendBuffer/1000) + "KB (Video: " + (videoQueueTime/1000000) + "ms) FPS: " + fps);
                     
             } else if (networkBad) {
                 // Kötü ağ: Buffer'ları arttır
@@ -165,14 +181,17 @@ public class Sender extends Thread {
                 currentRecvBuffer = Math.min(MAX_BUFFER, (int)(currentRecvBuffer * 1.1));
                 currentOverhead = Math.min(25, currentOverhead + 2);
                 
+                // ADAPTIVE FPS: Kötü ağda minimum FPS (bandwidth tasarrufu)
+                fps = Math.max(MIN_FPS, fps - 1);  // Kademeli FPS düşürme
+                
                 videoQueueTime = Math.min(MAX_QUEUE_TIME, (int)(videoQueueTime * 1.2));
                 audioQueueTime = Math.min(MAX_QUEUE_TIME, (int)(audioQueueTime * 1.2));
                 
                 System.out.println("🔴 KÖTÜ AĞ - Buffer arttır: " + 
-                    (currentSendBuffer/1000) + "KB (Video: " + (videoQueueTime/1000000) + "ms)");
+                    (currentSendBuffer/1000) + "KB (Video: " + (videoQueueTime/1000000) + "ms) FPS: " + fps);
             }
             
-            // Queue elementlerini güncelle
+            // Queue elementlerini güncelle + Receiver'a senkronize et
             updateQueueBuffers();
             
         } catch (Exception e) {
@@ -182,8 +201,13 @@ public class Sender extends Thread {
     
     private void updateQueueBuffers() {
         try {
+            // Receiver'a buffer güncellemelerini gönder (ADAPTIVE SYNC)
+            if (receiver != null) {
+                receiver.updateBuffers(currentSendBuffer, currentRecvBuffer, videoQueueTime, audioQueueTime);
+            }
+            
             // Pipeline elementlerine erişim GStreamer query sistemi ile
-            System.out.println("Queue buffer'ları güncellendi - Video: " + 
+            System.out.println("🔄 SYNC - Queue buffer'ları güncellendi - Video: " + 
                 (videoQueueTime/1000000) + "ms, Audio: " + (audioQueueTime/1000000) + "ms");
         } catch (Exception e) {
             System.err.println("Queue güncelleme hatası: " + e.getMessage());
