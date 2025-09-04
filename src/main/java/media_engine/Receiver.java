@@ -38,14 +38,14 @@ public class Receiver extends Thread {
             "&rcvlatency=" + LATENCY +
             "&peerlatency=" + LATENCY +
             "&tlpktdrop=1&oheadbw=5" +
-            "&sndbuf=512000&rcvbuf=512000&maxbw=0&inputbw=0&mss=1500\" ! " +
+            "&sndbuf=1024000&rcvbuf=1024000&maxbw=0&inputbw=0&mss=1500\" ! " +
             "tsdemux name=dmx " +
 
-            "dmx. ! queue max-size-buffers=5 ! h264parse ! avdec_h264 ! videoconvert ! " + videoSink + " sync=false " +
+            "dmx. ! queue max-size-buffers=15 max-size-time=50000000 ! h264parse ! avdec_h264 ! videoconvert ! " + videoSink + " sync=false " +
 
-            "dmx. ! queue max-size-buffers=5 ! aacparse ! avdec_aac ! audioconvert ! audioresample ! " +
+            "dmx. ! queue max-size-buffers=10 max-size-time=30000000 ! aacparse ! avdec_aac ! audioconvert ! audioresample ! " +
             "volume volume=0.6 ! " +  // Ses çıkış seviyesini düşür (yankı azaltır)
-            "autoaudiosink sync=false buffer-time=1000";
+            "autoaudiosink sync=false buffer-time=2000";
                          
         System.out.println("Media Engine Receiver Started");
         System.out.println("Listening on SRT port: " + LOCAL_PORT);

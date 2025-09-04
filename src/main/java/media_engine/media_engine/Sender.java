@@ -39,11 +39,11 @@ public class Sender extends Thread {
     private static final int SRT_MSS = 1500;               // Standard MTU
     private volatile int currentOverhead = 15;              // Başlangıç: %15 (dengeli), min %5
     
-    // Queue Buffer Parametreleri (GÜVENLİ başlangıç)
-    private volatile int videoQueueTime = 60000000;  // Başlangıç: 30ms (güvenli)
-    private volatile int audioQueueTime = 60000000;  // Başlangıç: 30ms (güvenli)
-    private static final int MIN_QUEUE_TIME = 30000000;     // 10ms minimum (çok düşük değil)
-    private static final int MAX_QUEUE_TIME = 150000000;   // 150ms maximum (burst koruması)
+    // Queue Buffer Parametreleri (GERÇEK DÜNYA değerleri)
+    private volatile int videoQueueTime = 50000000;   // Başlangıç: 50ms (gaming optimal)
+    private volatile int audioQueueTime = 50000000;   // Başlangıç: 50ms (gaming optimal) 
+    private static final int MIN_QUEUE_TIME = 20000000;      // 20ms minimum (gaming alt limit)
+    private static final int MAX_QUEUE_TIME = 200000000;     // 200ms maximum (broadcast üst limit)
     
     private String targetIP;
     private int targetPort;
@@ -80,65 +80,78 @@ public class Sender extends Thread {
     // Adaptive buffer yönetimi - EWMA tabanlı kademeli optimizasyon
     private void adaptBuffers(double packetLoss, double jitter, double rtt) {
         try {
-            // EWMA tabanlı ağ kategorisi (daha hassas)
-            boolean networkExcellent = (packetLoss < 0.001 && jitter < 1.0 && rtt < 2.0);  // Sub-millisecond perfect
-            boolean networkGood = (packetLoss < 0.01 && jitter < 5.0 && rtt < 10.0);       // Good performance  
-            boolean networkFair = (packetLoss < 0.03 && jitter < 15.0 && rtt < 50.0);      // Fair performance
-            boolean networkBad = (packetLoss > 0.05 || jitter > 25.0 || rtt > 100.0);      // Bad performance
-            boolean burstDetected = (packetLoss > 0.1 || jitter > 50.0);                   // Emergency burst
+            // GERÇEK DÜNYA ağ kategorileri (RTT log'larına göre)
+            boolean networkExcellent = (packetLoss < 0.01 && jitter < 5.0 && rtt < 10.0);  // Gerçekçi mükemmel
+            boolean networkGood = (packetLoss < 0.02 && jitter < 10.0 && rtt < 25.0);      // İyi performance  
+            boolean networkFair = (packetLoss < 0.05 && jitter < 20.0 && rtt < 50.0);      // Orta performance
+            boolean networkBad = (packetLoss > 0.08 || jitter > 30.0 || rtt > 80.0);       // Kötü performance
+            boolean burstDetected = (packetLoss > 0.15 || jitter > 50.0);                  // Emergency burst
+            
+            // DEBUG: Network kategorizasyonu
+            System.out.printf("🔍 KATEGORI - Loss:%.3f%% Jitter:%.1fms RTT:%.1fms → ", 
+                packetLoss*100, jitter, rtt);
+            if(networkExcellent) System.out.print("EXCELLENT");
+            else if(networkGood) System.out.print("GOOD"); 
+            else if(networkFair) System.out.print("FAIR");
+            else if(networkBad) System.out.print("BAD");
+            else if(burstDetected) System.out.print("BURST");
+            else System.out.print("NORMAL");
+            System.out.println();
             
             if (networkExcellent) {
-                // Mükemmel ağ: DAHA YAVAŞ azaltma (stabilite için)
-                currentSendBuffer = Math.max(MIN_BUFFER, (int)(currentSendBuffer * 0.97)); // %3 azalt (yumuşak)
-                currentRecvBuffer = Math.max(MIN_BUFFER, (int)(currentRecvBuffer * 0.97));
+                // Mükemmel ağ: Queue'ları KONTROLLÜ azalt (gaming seviyesine)
+                currentSendBuffer = Math.max(MIN_BUFFER, (int)(currentSendBuffer * 0.98)); // %2 azalt
+                currentRecvBuffer = Math.max(MIN_BUFFER, (int)(currentRecvBuffer * 0.98));
                 currentOverhead = Math.max(5, currentOverhead - 1);
                 
-                videoQueueTime = Math.max(MIN_QUEUE_TIME, (int)(videoQueueTime * 0.97)); // %3 azalt (yumuşak)
-                audioQueueTime = Math.max(MIN_QUEUE_TIME, (int)(audioQueueTime * 0.97));
+                // Queue'ları gaming seviyesine çek (50ms → 33ms → 20ms)
+                videoQueueTime = Math.max(MIN_QUEUE_TIME, (int)(videoQueueTime * 0.95));
+                audioQueueTime = Math.max(MIN_QUEUE_TIME, (int)(audioQueueTime * 0.95));
                 
-                System.out.println("MÜKEMMEL AĞ - Yumuşak optimizasyon: " + 
+                System.out.println("🟢 MÜKEMMEL AĞ - Gaming optimize: " + 
                     (currentSendBuffer/1000) + "KB (Video: " + (videoQueueTime/1000000) + "ms)");
                     
             } else if (networkGood) {
-                // İyi ağ: ÇOK YAVAŞ azaltma (stabilite öncelik)
-                currentSendBuffer = Math.max(MIN_BUFFER, (int)(currentSendBuffer * 0.98)); // %2 azalt
-                currentRecvBuffer = Math.max(MIN_BUFFER, (int)(currentRecvBuffer * 0.98));
-                currentOverhead = Math.max(5, currentOverhead);  // Sabit tut
+                // İyi ağ: SRT'yi biraz azalt, queue'yu sabit tut
+                currentSendBuffer = Math.max(MIN_BUFFER, (int)(currentSendBuffer * 0.99)); // %1 azalt
+                currentRecvBuffer = Math.max(MIN_BUFFER, (int)(currentRecvBuffer * 0.99));
+                currentOverhead = Math.max(5, currentOverhead);
                 
-                videoQueueTime = Math.max(MIN_QUEUE_TIME, (int)(videoQueueTime * 0.98)); // %2 azalt
+                // Queue'ları çok az azalt (video conferencing seviyesi)
+                videoQueueTime = Math.max(MIN_QUEUE_TIME, (int)(videoQueueTime * 0.98));
                 audioQueueTime = Math.max(MIN_QUEUE_TIME, (int)(audioQueueTime * 0.98));
                 
-                System.out.println("İYİ AĞ - Çok yavaş optimizasyon: " + 
-                    (currentSendBuffer/1000) + "KB");
+                System.out.println("🟡 İYİ AĞ - Konferans optimize: " + 
+                    (currentSendBuffer/1000) + "KB (Video: " + (videoQueueTime/1000000) + "ms)");
                     
             } else if (networkFair) {
-                // Orta ağ: Buffer'ları sabit tut, sahne değişikliklerine hazır
-                System.out.println("️ORTA AĞ - Buffer'lar sabit: " + 
-                    (currentSendBuffer/1000) + "KB (Stabil)");
+                // Orta ağ: Streaming seviyesinde tut (50ms-100ms)
+                System.out.println("🟠 ORTA AĞ - Streaming sabit: " + 
+                    (currentSendBuffer/1000) + "KB (Video: " + (videoQueueTime/1000000) + "ms)");
                     
             } else if (burstDetected) {
-                // Burst: Acil büyütme (sahne değişikliği koruması)
+                // Burst: Broadcast seviyesine çık (200ms)
                 currentSendBuffer = Math.min(MAX_BUFFER, currentSendBuffer * 2);
                 currentRecvBuffer = Math.min(MAX_BUFFER, currentRecvBuffer * 2);
                 currentOverhead = Math.min(25, currentOverhead + 5);
                 
-                videoQueueTime = Math.min(MAX_QUEUE_TIME, videoQueueTime * 3);
-                audioQueueTime = Math.min(MAX_QUEUE_TIME, audioQueueTime * 3);
+                videoQueueTime = Math.min(MAX_QUEUE_TIME, videoQueueTime * 2);
+                audioQueueTime = Math.min(MAX_QUEUE_TIME, audioQueueTime * 2);
                 
-                System.out.println("BURST TESPİT - Acil büyütme: " + 
-                    (currentSendBuffer/1000) + "KB (Sahne koruması)");
+                System.out.println("🔴 BURST - Broadcast seviye: " + 
+                    (currentSendBuffer/1000) + "KB (Video: " + (videoQueueTime/1000000) + "ms)");
                     
             } else if (networkBad) {
-                // Kötü ağ: Kademeli büyütme
-                currentSendBuffer = Math.min(MAX_BUFFER, (int)(currentSendBuffer * 1.2));
-                currentRecvBuffer = Math.min(MAX_BUFFER, (int)(currentRecvBuffer * 1.2));
+                // Kötü ağ: Buffer'ları arttır
+                currentSendBuffer = Math.min(MAX_BUFFER, (int)(currentSendBuffer * 1.1));
+                currentRecvBuffer = Math.min(MAX_BUFFER, (int)(currentRecvBuffer * 1.1));
                 currentOverhead = Math.min(25, currentOverhead + 2);
                 
-                videoQueueTime = Math.min(MAX_QUEUE_TIME, (int)(videoQueueTime * 1.3));
-                audioQueueTime = Math.min(MAX_QUEUE_TIME, (int)(audioQueueTime * 1.3));
+                videoQueueTime = Math.min(MAX_QUEUE_TIME, (int)(videoQueueTime * 1.2));
+                audioQueueTime = Math.min(MAX_QUEUE_TIME, (int)(audioQueueTime * 1.2));
                 
-                System.out.println("KÖTÜ AĞ - Kademeli büyütme: " + 
-                    (currentSendBuffer/1000) + "KB");
+                System.out.println("🔴 KÖTÜ AĞ - Buffer arttır: " + 
+                    (currentSendBuffer/1000) + "KB (Video: " + (videoQueueTime/1000000) + "ms)");
             }
             
             // Queue elementlerini güncelle
@@ -256,14 +269,14 @@ public class Sender extends Thread {
                 double packetLoss = buf.remaining() >= 8 ? buf.getDouble() : 0.0;  // Packet loss oranı
                 double jitter = buf.remaining() >= 8 ? buf.getDouble() : 0.0;      // Jitter (varsa)
                 
-                System.out.printf("RTT: %.2f ms | EWMA: %.2f ms | Loss: %.3f%% | Video: %d kbps | Audio: %d bps%n", 
-                                rttMs, ewmaRtt, packetLoss*100, current_bitrate_kbps, current_audio_bitrate_bps);
+                System.out.printf("🔍 DEBUG - RTT: %.2f ms | EWMA: %.2f ms | Loss: %.3f%% | Jitter: %.2f ms | Video: %d kbps%n", 
+                                rttMs, ewmaRtt, packetLoss*100, jitter, current_bitrate_kbps);
                 
-                // Bitrate ayarlaması
+                // Bitrate ayarlaması (EWMA kullan)
                 adjustBitrate(ewmaRtt);
                 
-                // Adaptive buffer yönetimi (ağ durumuna göre)
-                adaptBuffers(packetLoss, jitter, ewmaRtt);
+                // Adaptive buffer yönetimi (GÜNCEL RTT kullan - EWMA değil!)
+                adaptBuffers(packetLoss, jitter, rttMs);  // rttMs kullan, ewmaRtt değil!
                 
                 buf.clear();
             }

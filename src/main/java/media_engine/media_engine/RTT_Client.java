@@ -29,7 +29,7 @@ public class RTT_Client extends Thread {
     private int LOCAL_RTT_PORT;     // RTT Client için ayrı port    
 
     private static final long NANOS_PER_MS = 1_000_000L;
-    private static final double EWMA_ALPHA = 0.4;  // Daha responsive (0.2 -> 0.4)
+    private static final double EWMA_ALPHA = 0.15;  // Daha stabil (0.4 -> 0.15)
     
     public double ewmaRtt = 0.0;
     public int sequence = 0;
