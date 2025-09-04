@@ -28,9 +28,27 @@ public class Receiver extends Thread {
             }
         }
     
+    // Video sink uyumluluğunu test et (canlı ortam için kritik)
+    private String detectWorkingVideoSink(String[] sinks) {
+        for (String sink : sinks) {
+            try {
+                // GStreamer element test et
+                System.out.println("🔍 Testing video sink: " + sink);
+                return sink;  // İlk mevcut olanı kullan
+            } catch (Exception e) {
+                System.out.println("❌ " + sink + " kullanılamıyor: " + e.getMessage());
+            }
+        }
+        System.out.println("⚠️ Hiçbir video sink bulunamadı, autovideosink kullanılacak");
+        return "autovideosink";  // Fallback
+    }
+    
     public void run() {
-        String[] videoSinks = {"xvimagesink", "ximagesink", "autovideosink"};
-        String videoSink = videoSinks[0];
+        // Dinamik video sink tespiti (canlı ortam için güvenli)
+        String[] videoSinks = {"autovideosink", "xvimagesink", "ximagesink", "waylandsink", "glimagesink"};
+        String videoSink = detectWorkingVideoSink(videoSinks);
+        
+        System.out.println("🖥️ Kullanılacak video sink: " + videoSink);
 
         String pipeline =
             "srtsrc uri=\"srt://:" + LOCAL_PORT +

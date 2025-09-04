@@ -85,34 +85,47 @@ public class Echo extends Thread {
         System.out.println("Echo server started, listening for PING packets on port " + LOCAL_PORT + "...");
         try{
             while (!Thread.currentThread().isInterrupted()) {
-                if(sel.select(10) > 0) {
-                   for (Iterator<SelectionKey> it = sel.selectedKeys().iterator(); it.hasNext();) {
-                                SelectionKey k = it.next(); 
-                                it.remove();
+                try {
+                    if(sel.select(10) > 0) {
+                       for (Iterator<SelectionKey> it = sel.selectedKeys().iterator(); it.hasNext();) {
+                                    SelectionKey k = it.next(); 
+                                    it.remove();
 
-                             if (k.isReadable()) {
-                                    ByteBuffer EchoBuffer = ByteBuffer.allocate(PACKET_SIZE);
-                                    InetSocketAddress senderAddr = (InetSocketAddress) ch.receive(EchoBuffer);
-    
-                                    if(senderAddr != null) {
-                                        EchoBuffer.flip();
-                                        PacketInfo info = parsePacket(EchoBuffer);
-                                        if(info != null) {
-                                            if(info.msgType == MSG_TYPE_PING) {
-                                                System.out.println("PING received from " + senderAddr + " -> sending ECHO");
-                                                ByteBuffer echoPacket = createEchoPacket(EchoBuffer.duplicate());
-                                                ch.send(echoPacket, senderAddr);
+                                 if (k.isReadable()) {
+                                        ByteBuffer EchoBuffer = ByteBuffer.allocate(PACKET_SIZE);
+                                        InetSocketAddress senderAddr = (InetSocketAddress) ch.receive(EchoBuffer);
+        
+                                        if(senderAddr != null) {
+                                            EchoBuffer.flip();
+                                            PacketInfo info = parsePacket(EchoBuffer);
+                                            if(info != null) {
+                                                if(info.msgType == MSG_TYPE_PING) {
+                                                    System.out.println("PING received from " + senderAddr + " -> sending ECHO");
+                                                    ByteBuffer echoPacket = createEchoPacket(EchoBuffer.duplicate());
+                                                    ch.send(echoPacket, senderAddr);
+                                                }
                                             }
+                                            EchoBuffer.clear();
                                         }
-                                        EchoBuffer.clear();
                                     }
                                 }
                             }
-                        }
-                    }
-                }catch(Exception e){
+                } catch(Exception e){
                     System.err.println("Echo server error: " + e.getMessage());
                     e.printStackTrace();
+                    // Canlı ortamda crash recovery
+                    try {
+                        Thread.sleep(1000);  // 1 saniye bekle ve devam et
+                        System.out.println("🔄 Echo server recovery attempt...");
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
                 }  
+            }
+        } catch (Exception fatal) {
+            System.err.println("💥 FATAL Echo server error: " + fatal.getMessage());
+            fatal.printStackTrace();
+        }
     }    
 }

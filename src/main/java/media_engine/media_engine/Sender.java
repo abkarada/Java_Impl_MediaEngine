@@ -6,11 +6,26 @@ import org.freedesktop.gstreamer.Element;
 
 import java.nio.ByteBuffer;
 import java.nio.channels.Pipe;
+import java.io.File;
 
 
 public class Sender extends Thread {
      
-    private static final String device = "/dev/video0";
+    // Dinamik kamera device tespiti
+    private static String device = detectCameraDevice();
+    
+    // Kamera device'ı otomatik tespit et
+    private static String detectCameraDevice() {
+        for (int i = 0; i <= 5; i++) {
+            File deviceFile = new File("/dev/video" + i);
+            if (deviceFile.exists()) {
+                System.out.println("🎥 Kamera bulundu: /dev/video" + i);
+                return "/dev/video" + i;
+            }
+        }
+        System.out.println("⚠️ Kamera bulunamadı, /dev/video0 kullanılacak");
+        return "/dev/video0";  // Fallback
+    }
     private static  int WIDTH = 1280;
     private static  int HEIGHT = 720;
     private static  int fps = 30;
@@ -80,22 +95,22 @@ public class Sender extends Thread {
     // Adaptive buffer yönetimi - EWMA tabanlı kademeli optimizasyon
     private void adaptBuffers(double packetLoss, double jitter, double rtt) {
         try {
-            // GERÇEK DÜNYA ağ kategorileri (RTT log'larına göre)
-            boolean networkExcellent = (packetLoss < 0.01 && jitter < 5.0 && rtt < 10.0);  // Gerçekçi mükemmel
-            boolean networkGood = (packetLoss < 0.02 && jitter < 10.0 && rtt < 25.0);      // İyi performance  
-            boolean networkFair = (packetLoss < 0.05 && jitter < 20.0 && rtt < 50.0);      // Orta performance
-            boolean networkBad = (packetLoss > 0.08 || jitter > 30.0 || rtt > 80.0);       // Kötü performance
-            boolean burstDetected = (packetLoss > 0.15 || jitter > 50.0);                  // Emergency burst
+            // SIMETRIK ağ kategorileri (Her iki taraf aynı algıyı sahip)
+            boolean networkExcellent = (packetLoss < 0.005 && jitter < 3.0 && rtt < 8.0);   // %0.5 loss, 3ms jitter, 8ms RTT
+            boolean networkGood = (packetLoss < 0.015 && jitter < 8.0 && rtt < 20.0);       // %1.5 loss, 8ms jitter, 20ms RTT
+            boolean networkFair = (packetLoss < 0.03 && jitter < 15.0 && rtt < 40.0);       // %3 loss, 15ms jitter, 40ms RTT
+            boolean networkBad = (packetLoss > 0.05 || jitter > 25.0 || rtt > 60.0);        // %5+ loss veya 25ms+ jitter veya 60ms+ RTT
+            boolean burstDetected = (packetLoss > 0.1 || jitter > 40.0);                    // %10+ loss veya 40ms+ jitter
             
-            // DEBUG: Network kategorizasyonu
-            System.out.printf("🔍 KATEGORI - Loss:%.3f%% Jitter:%.1fms RTT:%.1fms → ", 
+            // DEBUG: Network kategorizasyonu (SIMETRİK)
+            System.out.printf("🔍 SIMETRİK KATEGORI - Loss:%.3f%% Jitter:%.1fms RTT:%.1fms → ", 
                 packetLoss*100, jitter, rtt);
-            if(networkExcellent) System.out.print("EXCELLENT");
-            else if(networkGood) System.out.print("GOOD"); 
-            else if(networkFair) System.out.print("FAIR");
-            else if(networkBad) System.out.print("BAD");
-            else if(burstDetected) System.out.print("BURST");
-            else System.out.print("NORMAL");
+            if(networkExcellent) System.out.print("⭐ EXCELLENT");
+            else if(networkGood) System.out.print("✅ GOOD"); 
+            else if(networkFair) System.out.print("⚠️ FAIR");
+            else if(networkBad) System.out.print("❌ BAD");
+            else if(burstDetected) System.out.print("🔥 BURST");
+            else System.out.print("🔶 NORMAL");
             System.out.println();
             
             if (networkExcellent) {

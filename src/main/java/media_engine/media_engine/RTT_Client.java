@@ -34,12 +34,16 @@ public class RTT_Client extends Thread {
     public double ewmaRtt = 0.0;
     public int sequence = 0;
     
-    // Packet loss ve jitter tracking
+    // Packet loss ve jitter tracking - SIMETRIK ÖLÇÜM
     private int totalPacketsSent = 0;
     private int packetsLost = 0;
-    private double[] recentRTTs = new double[10];  // Son 10 RTT değeri
+    private double[] recentRTTs = new double[20];  // Son 20 RTT değeri (daha stabil)
     private int rttIndex = 0;
     private boolean rttArrayFull = false;
+    
+    // Network simetrisini sağlamak için
+    private double avgRTT = 0.0;
+    private int validMeasurements = 0;
     
     DatagramChannel ch;
     Selector selector;
@@ -160,7 +164,7 @@ public class RTT_Client extends Thread {
                 ByteBuffer pingPacket = createPingPacket(LOCAL_RTT_PORT, sequence, sendTime);
                 ch.write(pingPacket);
                 
-                long deadline = System.nanoTime() + 100L * NANOS_PER_MS;  // 100ms timeout (200ms -> 100ms)
+                long deadline = System.nanoTime() + 200L * NANOS_PER_MS;  // 200ms timeout (canlı için güvenli)
                 boolean echoReceived = false;
 
                 while (System.nanoTime() < deadline && !echoReceived) {
@@ -194,18 +198,25 @@ public class RTT_Client extends Thread {
                                             rttIndex = (rttIndex + 1) % recentRTTs.length;
                                             if (rttIndex == 0) rttArrayFull = true;
                                             
+                                            // Simetrik ölçüm için average güncelle
+                                            validMeasurements++;
+                                            avgRTT = ((avgRTT * (validMeasurements - 1)) + rttMs) / validMeasurements;
+                                            
                                             double jitter = calculateJitter();
                                             double packetLossRate = calculatePacketLoss();
                                             
-                                            System.out.printf("RTT: %.2f ms (EWMA: %.2f ms) | Loss: %.1f%% | Jitter: %.2f ms%n", 
-                                                rttMs, ewmaRtt, packetLossRate*100, jitter);
+                                            // SIMETRIK DEĞERLERI KULLAN - Her iki taraf da aynı algıyı sahip
+                                            double symmetricRTT = (rttMs + ewmaRtt) / 2.0;  // Anlık ve EWMA'nın ortalaması
+                                            
+                                            System.out.printf("RTT: %.2f ms (EWMA: %.2f ms, SYM: %.2f ms) | Loss: %.1f%% | Jitter: %.2f ms%n", 
+                                                rttMs, ewmaRtt, symmetricRTT, packetLossRate*100, jitter);
                                             echoReceived = true;
 
                                             sink_pad.clear();
-                                            sink_pad.putDouble(rttMs);
+                                            sink_pad.putDouble(symmetricRTT);      // Simetrik RTT kullan
                                             sink_pad.putDouble(ewmaRtt);
-                                            sink_pad.putDouble(packetLossRate);  // Packet loss oranı
-                                            sink_pad.putDouble(jitter);          // Jitter değeri
+                                            sink_pad.putDouble(packetLossRate);    // Packet loss oranı
+                                            sink_pad.putDouble(jitter);            // Jitter değeri
                                             sink_pad.flip();
                                             while(sink_pad.hasRemaining()){
                                                 sink.write(sink_pad);
@@ -226,20 +237,22 @@ public class RTT_Client extends Thread {
                     packetsLost++;
                     System.out.println("PACKET LOSS DETECTED - No ECHO received (Loss: " + 
                         String.format("%.1f%%", calculatePacketLoss()*100) + ")");
-                    // Paket kaybında çok agresif müdahale
+                    // Paket kaybında yumuşak müdahale (canlı için güvenli)
                     if(ewmaRtt > 0) {
-                        ewmaRtt = ewmaRtt * 2.0;  // 1.5 -> 2.0 daha agresif
+                        ewmaRtt = ewmaRtt * 1.3;  // 2.0 -> 1.3 daha yumuşak (canlı için güvenli)
                     } else {
-                        ewmaRtt = 150.0;  // İlk paket kaybında yüksek penalty
+                        ewmaRtt = 100.0;  // 150.0 -> 100.0 daha makul
                     }
                     
-                    // Paket kaybı bilgisini pipe'a gönder
+                    // Paket kaybı bilgisini pipe'a gönder - SIMETRIK DEĞERLERLE
                     try {
+                        double timeoutPenalty = ewmaRtt > 0 ? ewmaRtt * 1.5 : 50.0;  // Daha yumuşak penalty
+                        
                         ByteBuffer lossBuffer = ByteBuffer.allocate(32);  // 4 doubles için
-                        lossBuffer.putDouble(0.0);  // RTT - packet loss durumunda 0
-                        lossBuffer.putDouble(ewmaRtt);
-                        lossBuffer.putDouble(calculatePacketLoss());  // Güncel packet loss oranı
-                        lossBuffer.putDouble(calculateJitter());      // Güncel jitter
+                        lossBuffer.putDouble(timeoutPenalty);             // Timeout penalty RTT
+                        lossBuffer.putDouble(timeoutPenalty);             // EWMA da penalty al
+                        lossBuffer.putDouble(calculatePacketLoss());      // Güncel packet loss oranı
+                        lossBuffer.putDouble(calculateJitter());          // Güncel jitter
                         lossBuffer.flip();
                         while(lossBuffer.hasRemaining()) {
                             sink.write(lossBuffer);
