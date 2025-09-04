@@ -18,8 +18,8 @@ public class Sender extends Thread {
     
     private volatile int current_bitrate_kbps = 2000;  
     private static final int MIN_BITRATE_KBPS = 1000;
-    private static final int MAX_BITRATE_KBPS = 15000;
-    private static final int BITRATE_STEP_KBPS = 200;   // Yumuşak geçişler (500->200)
+    private static final int MAX_BITRATE_KBPS = 12000;
+    private static final int BITRATE_STEP_KBPS = 150;   
     
     private volatile int current_audio_bitrate_bps = 128000;  // 128 kbps default
     private static final int MIN_AUDIO_BITRATE_BPS = 64000;   // 64 kbps minimum
@@ -40,16 +40,18 @@ public class Sender extends Thread {
     private volatile int currentOverhead = 15;              // Başlangıç: %15 (dengeli), min %5
     
     // Queue Buffer Parametreleri (Dengeli başlangıç)
-    private volatile int videoQueueTime = 20000000;  // Başlangıç: 20ms (dengeli)
-    private volatile int audioQueueTime = 20000000;  // Başlangıç: 20ms (dengeli)
+    private volatile int videoQueueTime = 60000000;  // Başlangıç: 20ms (dengeli)
+    private volatile int audioQueueTime = 60000000;  // Başlangıç: 20ms (dengeli)
     private static final int MIN_QUEUE_TIME = 1000000;     // 1ms minimum (EWMA ile ulaşılacak)
-    private static final int MAX_QUEUE_TIME = 100000000;   // 100ms maximum (burst koruması)
+    private static final int MAX_QUEUE_TIME = 150000000;   // 100ms maximum (burst koruması)
     
     private String targetIP;
     private int targetPort;
     private String LOCAL_HOST;
-    private int LOCAL_PORT;
+    private int LOCAL_PORT;          // SRT streaming için
+    private int LOCAL_RTT_PORT;      // RTT ölçümü için ayrı port
     private int latency;
+    private int ECHO_PORT;
     private String srtpKey;  // SRTP anahtarı
 
     Pipe pipe;
@@ -58,9 +60,11 @@ public class Sender extends Thread {
     private Element x264encoder;
     private Element aacEncoder;  // AAC encoder referansı
 
-    public Sender(String LOCAL_HOST, int LOCAL_PORT, String targetIP, int targetPort, int latency, String srtpKey, Pipe pipe) {
+    public Sender(String LOCAL_HOST, int LOCAL_PORT, int LOCAL_RTT_PORT, int ECHO_PORT, String targetIP, int targetPort, int latency, String srtpKey, Pipe pipe) {
         this.LOCAL_HOST = LOCAL_HOST;
         this.LOCAL_PORT = LOCAL_PORT;
+        this.LOCAL_RTT_PORT = LOCAL_RTT_PORT;
+        this.ECHO_PORT = ECHO_PORT;
         this.targetIP = targetIP;
         this.targetPort = targetPort;
         this.latency = latency;
@@ -69,7 +73,8 @@ public class Sender extends Thread {
         this.src = pipe.source();
         
         // Dengeli başlangıç - EWMA'ya göre kademeli optimizasyon
-        System.out.println("⚖️ Dengeli Mod: 20ms queue, 512KB buffer → EWMA optimizasyonu aktif");
+        System.out.println("Dengeli Mod: 20ms queue, 512KB buffer → EWMA optimizasyonu aktif");
+        System.out.println("RTT Client kullanacağı ayrı port: " + LOCAL_RTT_PORT);
     }
 
     // Adaptive buffer yönetimi - EWMA tabanlı kademeli optimizasyon
@@ -91,7 +96,7 @@ public class Sender extends Thread {
                 videoQueueTime = Math.max(MIN_QUEUE_TIME, (int)(videoQueueTime * 0.92));
                 audioQueueTime = Math.max(MIN_QUEUE_TIME, (int)(audioQueueTime * 0.92));
                 
-                System.out.println("🌟 MÜKEMMEL AĞ - Kademeli optimizasyon: " + 
+                System.out.println("MÜKEMMEL AĞ - Kademeli optimizasyon: " + 
                     (currentSendBuffer/1000) + "KB (Video: " + (videoQueueTime/1000000) + "ms)");
                     
             } else if (networkGood) {
@@ -103,12 +108,12 @@ public class Sender extends Thread {
                 videoQueueTime = Math.max(MIN_QUEUE_TIME, (int)(videoQueueTime * 0.95));
                 audioQueueTime = Math.max(MIN_QUEUE_TIME, (int)(audioQueueTime * 0.95));
                 
-                System.out.println("✅ İYİ AĞ - Yavaş optimizasyon: " + 
+                System.out.println("İYİ AĞ - Yavaş optimizasyon: " + 
                     (currentSendBuffer/1000) + "KB");
                     
             } else if (networkFair) {
                 // Orta ağ: Buffer'ları sabit tut, sahne değişikliklerine hazır
-                System.out.println("⚖️ ORTA AĞ - Buffer'lar sabit: " + 
+                System.out.println("️ORTA AĞ - Buffer'lar sabit: " + 
                     (currentSendBuffer/1000) + "KB (Stabil)");
                     
             } else if (burstDetected) {
@@ -120,7 +125,7 @@ public class Sender extends Thread {
                 videoQueueTime = Math.min(MAX_QUEUE_TIME, videoQueueTime * 3);
                 audioQueueTime = Math.min(MAX_QUEUE_TIME, audioQueueTime * 3);
                 
-                System.out.println("🔥 BURST TESPİT - Acil büyütme: " + 
+                System.out.println("BURST TESPİT - Acil büyütme: " + 
                     (currentSendBuffer/1000) + "KB (Sahne koruması)");
                     
             } else if (networkBad) {
@@ -132,7 +137,7 @@ public class Sender extends Thread {
                 videoQueueTime = Math.min(MAX_QUEUE_TIME, (int)(videoQueueTime * 1.3));
                 audioQueueTime = Math.min(MAX_QUEUE_TIME, (int)(audioQueueTime * 1.3));
                 
-                System.out.println("⚠️ KÖTÜ AĞ - Kademeli büyütme: " + 
+                System.out.println("KÖTÜ AĞ - Kademeli büyütme: " + 
                     (currentSendBuffer/1000) + "KB");
             }
             
@@ -144,11 +149,10 @@ public class Sender extends Thread {
         }
     }
     
-    // Queue buffer'larını runtime'da güncelle
     private void updateQueueBuffers() {
         try {
             // Pipeline elementlerine erişim GStreamer query sistemi ile
-            System.out.println("📝 Queue buffer'ları güncellendi - Video: " + 
+            System.out.println("Queue buffer'ları güncellendi - Video: " + 
                 (videoQueueTime/1000000) + "ms, Audio: " + (audioQueueTime/1000000) + "ms");
         } catch (Exception e) {
             System.err.println("Queue güncelleme hatası: " + e.getMessage());
@@ -166,11 +170,9 @@ public class Sender extends Thread {
         int oldAudioBitrate = current_audio_bitrate_bps;
         
         if (currentEwmaRtt > RTT_THRESHOLD_MS) {
-            // EWMA bazlı yumuşak bitrate düşürme
             double reduction_factor = Math.min(0.9, 1.0 - (currentEwmaRtt - RTT_THRESHOLD_MS) / 200.0);
             current_bitrate_kbps = Math.max(MIN_BITRATE_KBPS, 
                                           (int)(current_bitrate_kbps * reduction_factor));
-            // Audio bitrate düşür - yumuşak geçiş
             current_audio_bitrate_bps = Math.max(MIN_AUDIO_BITRATE_BPS,
                                                 current_audio_bitrate_bps - AUDIO_BITRATE_STEP_BPS);
             
@@ -254,7 +256,7 @@ public class Sender extends Thread {
                 double packetLoss = buf.remaining() >= 8 ? buf.getDouble() : 0.0;  // Packet loss oranı
                 double jitter = buf.remaining() >= 8 ? buf.getDouble() : 0.0;      // Jitter (varsa)
                 
-                System.out.printf("📊 RTT: %.2f ms | EWMA: %.2f ms | Loss: %.3f%% | Video: %d kbps | Audio: %d bps%n", 
+                System.out.printf("RTT: %.2f ms | EWMA: %.2f ms | Loss: %.3f%% | Video: %d kbps | Audio: %d bps%n", 
                                 rttMs, ewmaRtt, packetLoss*100, current_bitrate_kbps, current_audio_bitrate_bps);
                 
                 // Bitrate ayarlaması
@@ -269,7 +271,7 @@ public class Sender extends Thread {
             System.err.println("NIO pipe Error: " + e);
         }
         }).start();         
-        RTT_Client rtt_analysis = new RTT_Client(targetIP, targetPort, LOCAL_HOST, LOCAL_PORT, pipe);
+        RTT_Client rtt_analysis = new RTT_Client(targetIP, ECHO_PORT, LOCAL_HOST, LOCAL_RTT_PORT, pipe);
         rtt_analysis.start();
         
         System.out.println("Pipeline: " + pipelineStr);
@@ -279,15 +281,15 @@ public class Sender extends Thread {
         aacEncoder = pipeline.getElementByName("aacencoder");
         
         if (x264encoder != null) {
-            System.out.println(" ✓ x264encoder found - dynamic video bitrate enabled");
+            System.out.println("x264encoder found - dynamic video bitrate enabled");
         } else {
-            System.out.println(" ✗ x264encoder element not found - dynamic video bitrate disabled");
+            System.out.println("x264encoder element not found - dynamic video bitrate disabled");
         }
         
         if (aacEncoder != null) {
-            System.out.println(" ✓ AAC encoder found - dynamic audio bitrate enabled");
+            System.out.println("AAC encoder found - dynamic audio bitrate enabled");
         } else {
-            System.out.println(" ✗ AAC encoder element not found - dynamic audio bitrate disabled");
+            System.out.println("AAC encoder element not found - dynamic audio bitrate disabled");
         }
         
         pipeline.play();

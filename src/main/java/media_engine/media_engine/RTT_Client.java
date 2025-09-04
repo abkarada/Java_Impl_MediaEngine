@@ -24,9 +24,9 @@ public class RTT_Client extends Thread {
     private static final int PACKET_SIZE = 64;
     
     private String Client_IP;  
-    private int Client_PORT;   
+    private int Client_ECHO_PORT;   // Echo server port (hedef client'ın echo portu)
     private String LOCAL_HOST; 
-    private int LOCAL_PORT;    
+    private int LOCAL_RTT_PORT;     // RTT Client için ayrı port    
 
     private static final long NANOS_PER_MS = 1_000_000L;
     private static final double EWMA_ALPHA = 0.4;  // Daha responsive (0.2 -> 0.4)
@@ -95,7 +95,6 @@ public class RTT_Client extends Thread {
         }
     }
     
-    // Jitter hesaplama (RTT değişkenliği)
     private double calculateJitter() {
         if (!rttArrayFull && rttIndex < 2) return 0.0;
         
@@ -103,30 +102,27 @@ public class RTT_Client extends Thread {
         double mean = 0.0;
         int count = rttArrayFull ? recentRTTs.length : rttIndex;
         
-        // Ortalama RTT hesapla
         for (int i = 0; i < count; i++) {
             mean += recentRTTs[i];
         }
         mean /= count;
         
-        // Standart sapma hesapla (jitter)
         for (int i = 0; i < count; i++) {
             sum += Math.pow(recentRTTs[i] - mean, 2);
         }
         return Math.sqrt(sum / count);
     }
     
-    // Packet loss oranı hesapla
     private double calculatePacketLoss() {
         if (totalPacketsSent == 0) return 0.0;
         return (double) packetsLost / totalPacketsSent;
     }
     
-    public RTT_Client(String Client_IP, int Client_PORT, String LOCAL_HOST, int LOCAL_PORT, Pipe pipe){
+    public RTT_Client(String Client_IP, int Client_ECHO_PORT, String LOCAL_HOST, int LOCAL_RTT_PORT, Pipe pipe){
         this.Client_IP = Client_IP;
-        this.Client_PORT = Client_PORT;
+        this.Client_ECHO_PORT = Client_ECHO_PORT;
         this.LOCAL_HOST = LOCAL_HOST;
-        this.LOCAL_PORT = LOCAL_PORT;
+        this.LOCAL_RTT_PORT = LOCAL_RTT_PORT;
         this.pipe = pipe;
         this.buffer = ByteBuffer.allocateDirect(PACKET_SIZE).order(ByteOrder.BIG_ENDIAN);
 
@@ -135,17 +131,15 @@ public class RTT_Client extends Thread {
         try {
             this.ch = DatagramChannel.open(); 
             ch.setOption(java.net.StandardSocketOptions.SO_REUSEADDR, true);
-            ch.bind(new InetSocketAddress(LOCAL_HOST, LOCAL_PORT));
+            ch.bind(new InetSocketAddress(LOCAL_HOST, LOCAL_RTT_PORT));
             
-            // Echo server'a bağlanmak için port 7002'yi kullan (sabit Echo portu)
-            int echoServerPort = 7002;
-            ch.connect(new InetSocketAddress(Client_IP, echoServerPort));
+            ch.connect(new InetSocketAddress(Client_IP, Client_ECHO_PORT));//ping from rtt port ->client echo port ->echo packet to rtt port
             ch.configureBlocking(false);
             
             this.selector = Selector.open();
-            ch.register(selector, SelectionKey.OP_READ);
+            ch.register(selector, SelectionKey.OP_READ);//I am going to receive echo packet from client so I must listen
             
-            System.out.println("RTT_Client: " + LOCAL_HOST + ":" + LOCAL_PORT + " -> Echo server: " + Client_IP + ":" + echoServerPort);
+            System.out.println("RTT_Client: " + LOCAL_HOST + ":" + LOCAL_RTT_PORT + " -> Echo server: " + Client_IP + ":" + Client_ECHO_PORT);
             
         } catch (IOException e) {
             System.err.println("RTT_Client connection error: " + e.getMessage());
@@ -155,15 +149,15 @@ public class RTT_Client extends Thread {
 
     @Override
     public void run() {
-        while(true){
+        while(!Thread.currentThread().isInterrupted()){
             try {
-                // Send PING
+                // Send PING packet
                 ByteBuffer sink_pad = ByteBuffer.allocate(32); // 4 doubles = 32 bytes (RTT, EWMA, PacketLoss, Jitter)
 
                 sequence++;
                 totalPacketsSent++;
                 long sendTime = System.nanoTime();
-                ByteBuffer pingPacket = createPingPacket(LOCAL_PORT, sequence, sendTime);
+                ByteBuffer pingPacket = createPingPacket(LOCAL_RTT_PORT, sequence, sendTime);
                 ch.write(pingPacket);
                 
                 long deadline = System.nanoTime() + 100L * NANOS_PER_MS;  // 100ms timeout (200ms -> 100ms)
@@ -203,7 +197,7 @@ public class RTT_Client extends Thread {
                                             double jitter = calculateJitter();
                                             double packetLossRate = calculatePacketLoss();
                                             
-                                            System.out.printf("📡 RTT: %.2f ms (EWMA: %.2f ms) | Loss: %.1f%% | Jitter: %.2f ms%n", 
+                                            System.out.printf("RTT: %.2f ms (EWMA: %.2f ms) | Loss: %.1f%% | Jitter: %.2f ms%n", 
                                                 rttMs, ewmaRtt, packetLossRate*100, jitter);
                                             echoReceived = true;
 
@@ -230,7 +224,7 @@ public class RTT_Client extends Thread {
                 
                 if(!echoReceived) {
                     packetsLost++;
-                    System.out.println("🔴 PACKET LOSS DETECTED - No ECHO received (Loss: " + 
+                    System.out.println("PACKET LOSS DETECTED - No ECHO received (Loss: " + 
                         String.format("%.1f%%", calculatePacketLoss()*100) + ")");
                     // Paket kaybında çok agresif müdahale
                     if(ewmaRtt > 0) {

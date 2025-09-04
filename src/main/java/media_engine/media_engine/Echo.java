@@ -31,7 +31,7 @@ public class Echo extends Thread {
         this.sel = Selector.open();
         ch.setOption(StandardSocketOptions.SO_REUSEADDR, true);
         ch.setOption(StandardSocketOptions.SO_REUSEPORT, true);
-        ch.bind(new InetSocketAddress("127.0.0.1", LOCAL_PORT));
+        ch.bind(new InetSocketAddress("0.0.0.0", LOCAL_PORT));
         ch.configureBlocking(false);
         ch.register(sel, SelectionKey.OP_READ);
         
@@ -84,7 +84,7 @@ public class Echo extends Thread {
     public void run(){
         System.out.println("Echo server started, listening for PING packets on port " + LOCAL_PORT + "...");
         try{
-            while (true) {
+            while (!Thread.currentThread().isInterrupted()) {
                 if(sel.select(10) > 0) {
                    for (Iterator<SelectionKey> it = sel.selectedKeys().iterator(); it.hasNext();) {
                                 SelectionKey k = it.next(); 
