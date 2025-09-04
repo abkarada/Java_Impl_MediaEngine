@@ -10,7 +10,7 @@ public class MediaEngine {
     public static int my_RTT_SENDER_PORT = 7002;
     public static int my_ECHO_SERVER_PORT = 7003;
 
-    public static String target_IP = "192.168.1.205";
+    public static String target_IP = "192.168.1.213";
     public static int target_RECEIVER_PORT = 4001;
     public static int target_ECHO_SERVER = 4003;
 
