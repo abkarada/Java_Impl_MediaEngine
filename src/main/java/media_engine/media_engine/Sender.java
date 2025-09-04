@@ -40,9 +40,9 @@ public class Sender extends Thread {
     private volatile int currentOverhead = 15;              // Başlangıç: %15 (dengeli), min %5
     
     // Queue Buffer Parametreleri (GÜVENLİ başlangıç)
-    private volatile int videoQueueTime = 30000000;  // Başlangıç: 30ms (güvenli)
-    private volatile int audioQueueTime = 30000000;  // Başlangıç: 30ms (güvenli)
-    private static final int MIN_QUEUE_TIME = 20000000;     // 10ms minimum (çok düşük değil)
+    private volatile int videoQueueTime = 60000000;  // Başlangıç: 30ms (güvenli)
+    private volatile int audioQueueTime = 60000000;  // Başlangıç: 30ms (güvenli)
+    private static final int MIN_QUEUE_TIME = 30000000;     // 10ms minimum (çok düşük değil)
     private static final int MAX_QUEUE_TIME = 150000000;   // 150ms maximum (burst koruması)
     
     private String targetIP;
