@@ -95,25 +95,40 @@ public class Sender extends Thread {
     // Adaptive buffer yönetimi - EWMA tabanlı kademeli optimizasyon
     private void adaptBuffers(double packetLoss, double jitter, double rtt) {
         try {
-            // SIMETRIK ağ kategorileri (Her iki taraf aynı algıyı sahip)
-            boolean networkExcellent = (packetLoss < 0.005 && jitter < 3.0 && rtt < 8.0);   // %0.5 loss, 3ms jitter, 8ms RTT
-            boolean networkGood = (packetLoss < 0.015 && jitter < 8.0 && rtt < 20.0);       // %1.5 loss, 8ms jitter, 20ms RTT
-            boolean networkFair = (packetLoss < 0.03 && jitter < 15.0 && rtt < 40.0);       // %3 loss, 15ms jitter, 40ms RTT
-            boolean networkBad = (packetLoss > 0.05 || jitter > 25.0 || rtt > 60.0);        // %5+ loss veya 25ms+ jitter veya 60ms+ RTT
-            boolean burstDetected = (packetLoss > 0.1 || jitter > 40.0);                    // %10+ loss veya 40ms+ jitter
+            // FIX 2: Eşikleri ~2x gevşet ve EWMA RTT bazlı karar (stabil sınıflandırma)
+            boolean networkExcellent = (packetLoss < 0.005 && jitter < 6.0 && rtt < 15.0);   // Gevşetildi: 15ms RTT, 6ms jitter
+            boolean networkGood = (packetLoss < 0.015 && jitter < 15.0 && rtt < 30.0);       // Gevşetildi: 30ms RTT, 15ms jitter
+            boolean networkFair = (packetLoss < 0.03 && jitter < 25.0 && rtt < 60.0);        // Gevşetildi: 60ms RTT, 25ms jitter
+            boolean networkBad = (packetLoss > 0.05 || jitter > 35.0 || rtt > 80.0);         // Gevşetildi: 80ms RTT, 35ms jitter
+            boolean burstDetected = (packetLoss > 0.1 || jitter > 50.0);                     // Gevşetildi: 50ms jitter
             
-            // DEBUG: Network kategorizasyonu (SIMETRİK)
-            System.out.printf("🔍 SIMETRİK KATEGORI - Loss:%.3f%% Jitter:%.1fms RTT:%.1fms → ", 
+            // DEBUG: Network kategorizasyonu (EWMA bazlı, stabil)
+            System.out.printf("🔍 STABIL KATEGORI - Loss:%.3f%% Jitter:%.1fms EWMA:%.1fms → ", 
                 packetLoss*100, jitter, rtt);
-            if(networkExcellent) System.out.print("⭐ EXCELLENT");
+            
+            // FIX 2: burstDetected öncelik sırası düzeltildi (exclusive kontrol)
+            if(burstDetected) System.out.print("🔥 BURST");
+            else if(networkExcellent) System.out.print("⭐ EXCELLENT");
             else if(networkGood) System.out.print("✅ GOOD"); 
             else if(networkFair) System.out.print("⚠️ FAIR");
             else if(networkBad) System.out.print("❌ BAD");
-            else if(burstDetected) System.out.print("🔥 BURST");
             else System.out.print("🔶 NORMAL");
             System.out.println();
             
-            if (networkExcellent) {
+            // FIX 2: Önce burst kontrolü (exclusive)
+            if (burstDetected) {
+                // Burst: Broadcast seviyesine çık (200ms)
+                currentSendBuffer = Math.min(MAX_BUFFER, currentSendBuffer * 2);
+                currentRecvBuffer = Math.min(MAX_BUFFER, currentRecvBuffer * 2);
+                currentOverhead = Math.min(25, currentOverhead + 5);
+                
+                videoQueueTime = Math.min(MAX_QUEUE_TIME, videoQueueTime * 2);
+                audioQueueTime = Math.min(MAX_QUEUE_TIME, audioQueueTime * 2);
+                
+                System.out.println("🔴 BURST - Broadcast seviye: " + 
+                    (currentSendBuffer/1000) + "KB (Video: " + (videoQueueTime/1000000) + "ms)");
+                    
+            } else if (networkExcellent) {
                 // Mükemmel ağ: Queue'ları KONTROLLÜ azalt (gaming seviyesine)
                 currentSendBuffer = Math.max(MIN_BUFFER, (int)(currentSendBuffer * 0.98)); // %2 azalt
                 currentRecvBuffer = Math.max(MIN_BUFFER, (int)(currentRecvBuffer * 0.98));
@@ -142,18 +157,6 @@ public class Sender extends Thread {
             } else if (networkFair) {
                 // Orta ağ: Streaming seviyesinde tut (50ms-100ms)
                 System.out.println("🟠 ORTA AĞ - Streaming sabit: " + 
-                    (currentSendBuffer/1000) + "KB (Video: " + (videoQueueTime/1000000) + "ms)");
-                    
-            } else if (burstDetected) {
-                // Burst: Broadcast seviyesine çık (200ms)
-                currentSendBuffer = Math.min(MAX_BUFFER, currentSendBuffer * 2);
-                currentRecvBuffer = Math.min(MAX_BUFFER, currentRecvBuffer * 2);
-                currentOverhead = Math.min(25, currentOverhead + 5);
-                
-                videoQueueTime = Math.min(MAX_QUEUE_TIME, videoQueueTime * 2);
-                audioQueueTime = Math.min(MAX_QUEUE_TIME, audioQueueTime * 2);
-                
-                System.out.println("🔴 BURST - Broadcast seviye: " + 
                     (currentSendBuffer/1000) + "KB (Video: " + (videoQueueTime/1000000) + "ms)");
                     
             } else if (networkBad) {
@@ -279,19 +282,19 @@ public class Sender extends Thread {
             try{
             while(src.read(buf) > 0){
                 buf.flip();
-                double rttMs = buf.getDouble();
-                double ewmaRtt = buf.getDouble(); 
-                double packetLoss = buf.remaining() >= 8 ? buf.getDouble() : 0.0;  // Packet loss oranı
-                double jitter = buf.remaining() >= 8 ? buf.getDouble() : 0.0;      // Jitter (varsa)
+                double rttMs = buf.getDouble();       // 1) Ham RTT (diagnostic)
+                double ewmaRtt = buf.getDouble();     // 2) EWMA RTT (decision-making)
+                double packetLoss = buf.remaining() >= 8 ? buf.getDouble() : 0.0;  // 3) Packet loss oranı
+                double jitter = buf.remaining() >= 8 ? buf.getDouble() : 0.0;      // 4) Jitter
                 
-                System.out.printf("🔍 DEBUG - RTT: %.2f ms | EWMA: %.2f ms | Loss: %.3f%% | Jitter: %.2f ms | Video: %d kbps%n", 
+                System.out.printf("🔍 METRICS - Raw RTT: %.2f ms | EWMA: %.2f ms | Loss: %.3f%% | Jitter: %.2f ms | Video: %d kbps%n", 
                                 rttMs, ewmaRtt, packetLoss*100, jitter, current_bitrate_kbps);
                 
-                // Bitrate ayarlaması (EWMA kullan)
+                // FIX 2: Kararları EWMA RTT ile ver (stabil ve tutarlı)
                 adjustBitrate(ewmaRtt);
                 
-                // Adaptive buffer yönetimi (GÜNCEL RTT kullan - EWMA değil!)
-                adaptBuffers(packetLoss, jitter, rttMs);  // rttMs kullan, ewmaRtt değil!
+                // FIX 2: adaptBuffers'a da EWMA RTT ver (stabil sınıflandırma için)
+                adaptBuffers(packetLoss, jitter, ewmaRtt);
                 
                 buf.clear();
             }

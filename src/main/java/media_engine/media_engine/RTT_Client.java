@@ -205,18 +205,16 @@ public class RTT_Client extends Thread {
                                             double jitter = calculateJitter();
                                             double packetLossRate = calculatePacketLoss();
                                             
-                                            // SIMETRIK DEĞERLERI KULLAN - Her iki taraf da aynı algıyı sahip
-                                            double symmetricRTT = (rttMs + ewmaRtt) / 2.0;  // Anlık ve EWMA'nın ortalaması
-                                            
-                                            System.out.printf("RTT: %.2f ms (EWMA: %.2f ms, SYM: %.2f ms) | Loss: %.1f%% | Jitter: %.2f ms%n", 
-                                                rttMs, ewmaRtt, symmetricRTT, packetLossRate*100, jitter);
+                                            System.out.printf("RTT: %.2f ms (EWMA: %.2f ms) | Loss: %.1f%% | Jitter: %.2f ms%n", 
+                                                rttMs, ewmaRtt, packetLossRate*100, jitter);
                                             echoReceived = true;
 
+                                            // FIX 1: Ham RTT ilk alan, EWMA ikinci alan (semantik tutarlılık)
                                             sink_pad.clear();
-                                            sink_pad.putDouble(symmetricRTT);      // Simetrik RTT kullan
-                                            sink_pad.putDouble(ewmaRtt);
-                                            sink_pad.putDouble(packetLossRate);    // Packet loss oranı
-                                            sink_pad.putDouble(jitter);            // Jitter değeri
+                                            sink_pad.putDouble(rttMs);             // 1) RAW RTT (anlık)
+                                            sink_pad.putDouble(ewmaRtt);           // 2) EWMA RTT (smoothed)
+                                            sink_pad.putDouble(packetLossRate);    // 3) Packet loss oranı
+                                            sink_pad.putDouble(jitter);            // 4) Jitter değeri
                                             sink_pad.flip();
                                             while(sink_pad.hasRemaining()){
                                                 sink.write(sink_pad);
@@ -244,15 +242,15 @@ public class RTT_Client extends Thread {
                         ewmaRtt = 100.0;  // 150.0 -> 100.0 daha makul
                     }
                     
-                    // Paket kaybı bilgisini pipe'a gönder - SIMETRIK DEĞERLERLE
+                    // FIX 1: Timeout durumunda da aynı sıra (raw RTT, EWMA RTT, loss, jitter)
                     try {
                         double timeoutPenalty = ewmaRtt > 0 ? ewmaRtt * 1.5 : 50.0;  // Daha yumuşak penalty
                         
                         ByteBuffer lossBuffer = ByteBuffer.allocate(32);  // 4 doubles için
-                        lossBuffer.putDouble(timeoutPenalty);             // Timeout penalty RTT
-                        lossBuffer.putDouble(timeoutPenalty);             // EWMA da penalty al
-                        lossBuffer.putDouble(calculatePacketLoss());      // Güncel packet loss oranı
-                        lossBuffer.putDouble(calculateJitter());          // Güncel jitter
+                        lossBuffer.putDouble(timeoutPenalty);             // 1) Timeout penalty RAW RTT
+                        lossBuffer.putDouble(timeoutPenalty);             // 2) EWMA da penalty al
+                        lossBuffer.putDouble(calculatePacketLoss());      // 3) Güncel packet loss oranı
+                        lossBuffer.putDouble(calculateJitter());          // 4) Güncel jitter
                         lossBuffer.flip();
                         while(lossBuffer.hasRemaining()) {
                             sink.write(lossBuffer);
