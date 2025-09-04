@@ -31,19 +31,19 @@ public class Sender extends Thread {
     private long lastBitrateChange = 0;
     private static final long BITRATE_CHANGE_INTERVAL_MS = 300;  // Ultra responsive (800->300ms) 
     
-    // SRT Buffer ve Network Parametreleri (Dengeli başlangıç → EWMA tabanlı optimizasyon)
-    private volatile int currentSendBuffer = 512000;       // Başlangıç: 512KB (dengeli)
-    private volatile int currentRecvBuffer = 512000;       // Başlangıç: 512KB (dengeli)
-    private static final int MIN_BUFFER = 64000;           // Minimum: 64KB (EWMA ile ulaşılacak)
+    // SRT Buffer ve Network Parametreleri (GÜVENLİ başlangıç)
+    private volatile int currentSendBuffer = 512000;       // Başlangıç: 512KB (güvenli)
+    private volatile int currentRecvBuffer = 512000;       // Başlangıç: 512KB (güvenli)
+    private static final int MIN_BUFFER = 128000;          // Minimum: 128KB (güvenli alt limit)
     private static final int MAX_BUFFER = 4000000;         // Maximum: 4MB (burst'lara karşı)
     private static final int SRT_MSS = 1500;               // Standard MTU
     private volatile int currentOverhead = 15;              // Başlangıç: %15 (dengeli), min %5
     
-    // Queue Buffer Parametreleri (Dengeli başlangıç)
-    private volatile int videoQueueTime = 60000000;  // Başlangıç: 20ms (dengeli)
-    private volatile int audioQueueTime = 60000000;  // Başlangıç: 20ms (dengeli)
-    private static final int MIN_QUEUE_TIME = 1000000;     // 1ms minimum (EWMA ile ulaşılacak)
-    private static final int MAX_QUEUE_TIME = 150000000;   // 100ms maximum (burst koruması)
+    // Queue Buffer Parametreleri (GÜVENLİ başlangıç)
+    private volatile int videoQueueTime = 30000000;  // Başlangıç: 30ms (güvenli)
+    private volatile int audioQueueTime = 30000000;  // Başlangıç: 30ms (güvenli)
+    private static final int MIN_QUEUE_TIME = 20000000;     // 10ms minimum (çok düşük değil)
+    private static final int MAX_QUEUE_TIME = 150000000;   // 150ms maximum (burst koruması)
     
     private String targetIP;
     private int targetPort;
@@ -88,27 +88,27 @@ public class Sender extends Thread {
             boolean burstDetected = (packetLoss > 0.1 || jitter > 50.0);                   // Emergency burst
             
             if (networkExcellent) {
-                // Mükemmel ağ: Çok kademeli azaltma (sahne değişikliklerine hazır)
-                currentSendBuffer = Math.max(MIN_BUFFER, (int)(currentSendBuffer * 0.92)); // %8 azalt
-                currentRecvBuffer = Math.max(MIN_BUFFER, (int)(currentRecvBuffer * 0.92));
+                // Mükemmel ağ: DAHA YAVAŞ azaltma (stabilite için)
+                currentSendBuffer = Math.max(MIN_BUFFER, (int)(currentSendBuffer * 0.97)); // %3 azalt (yumuşak)
+                currentRecvBuffer = Math.max(MIN_BUFFER, (int)(currentRecvBuffer * 0.97));
                 currentOverhead = Math.max(5, currentOverhead - 1);
                 
-                videoQueueTime = Math.max(MIN_QUEUE_TIME, (int)(videoQueueTime * 0.92));
-                audioQueueTime = Math.max(MIN_QUEUE_TIME, (int)(audioQueueTime * 0.92));
+                videoQueueTime = Math.max(MIN_QUEUE_TIME, (int)(videoQueueTime * 0.97)); // %3 azalt (yumuşak)
+                audioQueueTime = Math.max(MIN_QUEUE_TIME, (int)(audioQueueTime * 0.97));
                 
-                System.out.println("MÜKEMMEL AĞ - Kademeli optimizasyon: " + 
+                System.out.println("MÜKEMMEL AĞ - Yumuşak optimizasyon: " + 
                     (currentSendBuffer/1000) + "KB (Video: " + (videoQueueTime/1000000) + "ms)");
                     
             } else if (networkGood) {
-                // İyi ağ: Yavaş azaltma
-                currentSendBuffer = Math.max(MIN_BUFFER, (int)(currentSendBuffer * 0.95)); // %5 azalt
-                currentRecvBuffer = Math.max(MIN_BUFFER, (int)(currentRecvBuffer * 0.95));
-                currentOverhead = Math.max(5, currentOverhead - 1);
+                // İyi ağ: ÇOK YAVAŞ azaltma (stabilite öncelik)
+                currentSendBuffer = Math.max(MIN_BUFFER, (int)(currentSendBuffer * 0.98)); // %2 azalt
+                currentRecvBuffer = Math.max(MIN_BUFFER, (int)(currentRecvBuffer * 0.98));
+                currentOverhead = Math.max(5, currentOverhead);  // Sabit tut
                 
-                videoQueueTime = Math.max(MIN_QUEUE_TIME, (int)(videoQueueTime * 0.95));
-                audioQueueTime = Math.max(MIN_QUEUE_TIME, (int)(audioQueueTime * 0.95));
+                videoQueueTime = Math.max(MIN_QUEUE_TIME, (int)(videoQueueTime * 0.98)); // %2 azalt
+                audioQueueTime = Math.max(MIN_QUEUE_TIME, (int)(audioQueueTime * 0.98));
                 
-                System.out.println("İYİ AĞ - Yavaş optimizasyon: " + 
+                System.out.println("İYİ AĞ - Çok yavaş optimizasyon: " + 
                     (currentSendBuffer/1000) + "KB");
                     
             } else if (networkFair) {
