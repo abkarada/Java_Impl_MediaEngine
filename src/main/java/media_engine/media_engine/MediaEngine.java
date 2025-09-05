@@ -1,42 +1,46 @@
 package media_engine.media_engine;
 
 import media_engine.Receiver;
-import java.nio.channels.Pipe;
+import org.freedesktop.gstreamer.Gst;
 
 public class MediaEngine {
-    public static String my_IP = "192.168.1.172";
+    // --- Yerel Makine Ayarları ---
+    public static String my_IP = "127.0.0.1"; // Test için localhost
     public static int my_STREAM_SENDER_PORT = 7000;
     public static int my_STREAM_RECEIVER_PORT = 7001;
-    public static int my_RTT_SENDER_PORT = 7002;
-    public static int my_ECHO_SERVER_PORT = 7003;
 
-    public static String target_IP = "192.168.1.170";
-    public static int target_RECEIVER_PORT = 4001;
-    public static int target_ECHO_SERVER = 4003;
+    // --- Hedef Makine Ayarları ---
+    public static String target_IP = "127.0.0.1"; // Test için localhost
+    public static int target_RECEIVER_PORT = 7001; // Hedef port, receiver ile aynı olmalı
+
+    // --- SRT Gecikme Ayarı ---
+    private static final int SRT_LATENCY = 120;
 
     public static void main(String[] args) {
-        try{
-            Pipe pipe = Pipe.open();
+        try {
+            // Adım 1: GStreamer'ı SADECE BİR KEZ, en başta başlat.
+            // Bu, en yaygın çökme nedenini ortadan kaldırır.
+            Gst.init("MediaEngine", new String[]{});
 
-            Receiver receiver = new Receiver(my_STREAM_RECEIVER_PORT, my_ECHO_SERVER_PORT, 50);
+            // Adım 2: Receiver'ı oluştur.
+            Receiver receiver = new Receiver(my_STREAM_RECEIVER_PORT, SRT_LATENCY);
 
+            // Adım 3: Sender'ı oluştur. SRTStats referansı kaldırıldı.
             Sender sender = new Sender(my_IP, my_STREAM_SENDER_PORT,
-                                          my_RTT_SENDER_PORT, target_ECHO_SERVER,
-                                          target_IP, target_RECEIVER_PORT,
-                                      50, "default0123456789", pipe, receiver);  // Receiver referansı eklendi
+                    target_IP, target_RECEIVER_PORT,
+                    SRT_LATENCY,
+                    "default0123456789",
+                    receiver);
 
-            synchronized(receiver) {
-                receiver.start();
-                Thread.sleep(250);
-            }
-            synchronized(sender){
-                sender.start();
-            }
+            // Adım 4: Thread'leri başlat.
+            receiver.start();
+            // Sender'ın başlamadan önce Receiver'ın dinlemeye hazır olması için kısa bir bekleme
+            Thread.sleep(500);
+            sender.start();
 
-        }catch(Exception e){
-            System.err.println("STREAM ERROR: " + e);
+        } catch(Exception e) {
+            System.err.println("MediaEngine HATA: Uygulama başlatılamadı.");
+            e.printStackTrace();
         }
-
-
     }
 }

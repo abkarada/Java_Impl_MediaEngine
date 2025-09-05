@@ -7,7 +7,6 @@ group 'com.example'
 version '1.0-SNAPSHOT'
 
 sourceCompatibility = '17'
-
 targetCompatibility = '17'
 
 repositories {
@@ -18,15 +17,18 @@ application {
     mainClass = 'media_engine.media_engine.MediaEngine'
 }
 
+dependencies {
+    implementation files('libs/gst1-java-core-1.4.0.jar')
+    // JNA (Java Native Access) kütüphaneleri SRT ile C tabanlı iletişim için eklendi.
+    implementation 'net.java.dev.jna:jna:5.14.0'
+    implementation 'net.java.dev.jna:jna-platform:5.13.0'
+    // SRT'den gelen JSON verisini işlemek için JSON kütüphanesi eklendi.
+    implementation 'org.json:json:20231013'
+}
+
 task runReceiver(type: JavaExec) {
     group = 'application'
     description = 'Run MediaEngine (both Sender and Receiver)'
     classpath = sourceSets.main.runtimeClasspath
     mainClass = 'media_engine.media_engine.MediaEngine'
-}
-
-dependencies {
-    implementation files('libs/gst1-java-core-1.4.0.jar')
-    implementation 'net.java.dev.jna:jna:5.13.0'
-    implementation 'net.java.dev.jna:jna-platform:5.13.0'
 }
