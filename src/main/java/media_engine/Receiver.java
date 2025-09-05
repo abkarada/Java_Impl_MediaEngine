@@ -15,32 +15,26 @@ public class Receiver extends Thread {
         this.LATENCY = LATENCY;
     }
 
-    private String detectWorkingVideoSink(String[] sinks) {
-        for (String sink : sinks) {
-            System.out.println("🔍 Video sink olarak '" + sink + "' denenecek.");
-            return sink;
-        }
-        return "autovideosink";
-    }
-
     private String buildPipeline(String videoSink) {
+        // --- MAKSİMUM 250ms GECİKME İÇİN OPTİMİZASYON ---
+        // 'leaky=downstream' ve düşük 'max-size-time' parametreleri eklendi.
         return String.format(
-                "srtsrc uri=\"srt://:%d?mode=listener&latency=%d\" ! " +
+                "srtsrc uri=\"srt://:%d?mode=listener&latency=%d&sndbuf=2097152&rcvbuf=2097152\" ! " +
                         "tsdemux name=demux " +
-                        // **DÜZELTME BURADA:** avdec_h24 -> avdec_h264 olarak değiştirildi.
-                        "demux. ! queue ! h264parse ! avdec_h264 ! videoconvert ! %s sync=false " +
-                        "demux. ! queue ! aacparse ! avdec_aac ! audioconvert ! audioresample ! " +
+                        "demux. ! queue name=video_queue leaky=downstream max-size-time=50000000 ! h264parse ! avdec_h264 ! videoconvert ! %s sync=false " +
+                        "demux. ! queue name=audio_queue leaky=downstream max-size-time=50000000 ! aacparse ! avdec_aac ! audioconvert ! audioresample ! " +
                         "volume volume=0.6 ! autoaudiosink sync=false",
                 LOCAL_PORT, LATENCY, videoSink
         );
     }
 
+    private String detectWorkingVideoSink(String[] sinks) { /* ... aynı ... */ return "autovideosink"; }
+
     @Override
     public void run() {
-        System.out.println("Media Engine Receiver Başlatıldı");
+        System.out.println("Receiver Başlatıldı (Maksimum 250ms Gecikme Optimizasyonu)");
 
-        String[] videoSinks = {"autovideosink", "xvimagesink"};
-        String videoSink = detectWorkingVideoSink(videoSinks);
+        String videoSink = detectWorkingVideoSink(new String[]{"autovideosink", "xvimagesink"});
         String pipelineStr = buildPipeline(videoSink);
 
         System.out.println("Listening on SRT port: " + LOCAL_PORT);
@@ -49,18 +43,10 @@ public class Receiver extends Thread {
         Pipeline pipeline = (Pipeline) Gst.parseLaunch(pipelineStr);
         Bus bus = pipeline.getBus();
 
-        bus.connect((Bus.EOS) source -> {
-            System.out.println("Receiver: Akış sonu (EOS) sinyali alındı.");
-            Gst.quit();
-        });
-        bus.connect((Bus.ERROR) (source, code, message) -> {
-            System.err.println("Receiver Hata: " + message + " (Kod: " + code + ")");
-            Gst.quit();
-        });
+        bus.connect((Bus.EOS) source -> Gst.quit());
+        bus.connect((Bus.ERROR) (source, code, message) -> { System.err.println("Receiver Hata: " + message); Gst.quit(); });
 
         pipeline.play();
-
-        System.out.println("Receiver GStreamer ana döngüsü başlatılıyor...");
         Gst.main();
 
         pipeline.stop();
