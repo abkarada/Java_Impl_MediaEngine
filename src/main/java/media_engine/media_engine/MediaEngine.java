@@ -4,13 +4,13 @@ import media_engine.Receiver;
 import java.nio.channels.Pipe;
 
 public class MediaEngine {
-    public static String my_IP = "192.168.1.207";
+    public static String my_IP = "192.168.1.172";
     public static int my_STREAM_SENDER_PORT = 7000;
     public static int my_STREAM_RECEIVER_PORT = 7001;
     public static int my_RTT_SENDER_PORT = 7002;
     public static int my_ECHO_SERVER_PORT = 7003;
 
-    public static String target_IP = "192.168.1.213";
+    public static String target_IP = "192.168.1.170";
     public static int target_RECEIVER_PORT = 4001;
     public static int target_ECHO_SERVER = 4003;
 
